@@ -37,12 +37,13 @@ def dataset_dir(ds):
 
 
 class Benchmark:
-    def __init__(self, dataset, detectors=STANDARD, probes=True, out="cpbench_runs", quick=False, cache_data=True, log=print):
+    def __init__(self, dataset, detectors=STANDARD, probes=True, out="cpbench_runs", quick=False, cache_data=True, log=print, load_only=False):
         ds = dataset if isinstance(dataset, Dataset) else Dataset(dataset)
         if quick:                                                         # small fixed sets for fast iteration
             ds = ds.with_splits(test=[4, 16000], val=[2, 9600])
         self.ds, self.out, self.probes, self.cache_data, self.log = ds, out, probes, cache_data, log
         self.detectors = [make_detector(d) if isinstance(d, (str, dict)) else d for d in detectors]
+        self.load_only = load_only
         self._test = None
 
     def with_test(self, series, samples):
@@ -66,7 +67,12 @@ class Benchmark:
     def fit(self, f, refit=False):
         """Fit (or load) a feature learner in its run directory."""
         f = make_learner(f) if isinstance(f, (str, dict)) else f
-        rd = self.run_dir(f); os.makedirs(rd, exist_ok=True)
+        rd = self.run_dir(f)
+        if self.load_only and f.trainable and f.params.get("steps", 1) > 0 and not os.path.isfile(os.path.join(rd, "model.pt")):
+            raise FileNotFoundError(f"Load-only analysis: missing model {rd}/model.pt; submit training on a compute node.")
+        if self.load_only and refit:
+            raise ValueError("refit is incompatible with load-only analysis")
+        os.makedirs(rd, exist_ok=True)
         with open(os.path.join(rd, "learner.json"), "w") as fh:
             json.dump(dict(name=f.name, params=f.params, dataset=self.ds.config()), fh, indent=1, default=str)
         mp = os.path.join(rd, "model.pt")
@@ -95,12 +101,12 @@ class Benchmark:
         f = make_learner(f) if isinstance(f, (str, dict)) else f
         views, starts = self.features(f, refit)
         i, data, base = self.ds.info, self.test, os.path.join(self.run_dir(f), self.protocol())
-        meta = dict(dataset=i.id, regime=i.regime, signal=i.signal, nuisance=i.nuisance, corruption=i.corruption,
+        meta = dict(scoring_protocol="audit_v2", dataset=i.id, regime=i.regime, signal=i.signal, nuisance=i.nuisance, corruption=i.corruption,
                     features=f.name, features_label=f.label(), W=f.window, gap=f.params.get("gap", 0), seed=f.params.get("seed", 0),
                     learner_params=json.dumps(f.identity(), sort_keys=True, default=str))
         dfs = []
         for det in self.detectors + (["probe"] if self.probes else []):
-            stem = os.path.join(base, "probe" if det == "probe" else f"{det.name}_{_hash(det.params)}")
+            stem = os.path.join(base, "probe_v2" if det == "probe" else f"{det.name}_{_hash(det.params)}_scoring_v2")
             cached = read_result(stem) if not refit else None
             if cached is not None:
                 dfs.append(cached); continue

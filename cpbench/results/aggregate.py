@@ -15,11 +15,20 @@ def read_result(stem):
     return None
 
 
-def collect(root="cpbench_runs"):
+def collect(root="cpbench_runs", protocol="audit_v2"):
+    """Collect one scoring protocol; use protocol="legacy" for historical files. Never pool versions."""
     stems = {os.path.splitext(f)[0] for ext in ("csv", "parquet")
              for f in glob.glob(os.path.join(root, "**", f"*.{ext}"), recursive=True)}
     dfs = [read_result(s) for s in sorted(stems)]
-    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    if not dfs:
+        return pd.DataFrame()
+    result = pd.concat(dfs, ignore_index=True)
+    versions = result.get("scoring_protocol", pd.Series("legacy", index=result.index)).fillna("legacy")
+    if protocol is None:
+        if versions.nunique() > 1:
+            raise ValueError("Mixed scoring protocols; collect each protocol separately")
+        return result
+    return result.loc[versions == protocol].reset_index(drop=True)
 
 
 def table(df, metric="acc", detector="hmm", view="features", by=("features", "W", "gap"), columns="dataset"):

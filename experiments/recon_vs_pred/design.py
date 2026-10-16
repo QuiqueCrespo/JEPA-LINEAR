@@ -1,8 +1,8 @@
 """Reconstruction vs contrastive vs prediction: the pre-registered design (see README.md in this folder).
 
-One factor is manipulated: a regime-independent nuisance added to the observation, at a timescale either shorter
-than the context-target distance (fast: forgotten before the target) or much longer (slow: still there), at two
-amplitudes, plus a no-nuisance condition.  Everything else is fixed.
+A regime-independent nuisance varies in amplitude and correlation timescale. Fast nuisance has weak start-to-start
+correlation but residual dependence across the nearest window edges; slow nuisance persists across the gap.
+See the scientific audit amendment in README.md. Other construction parameters remain fixed.
 
     python experiments/recon_vs_pred/design.py      # writes cpbench/configs/sweep_recon_vs_pred.yaml
 """
@@ -18,10 +18,10 @@ PILOT = ("N0", "F2", "S2")
 
 LEARNERS = dict(ae="reconstruction", vae="reconstruction", jepa_separate="prediction", jepa_shared="prediction",
                 cpc="contrastive (future target)", ts2vec="contrastive (same-time target)")
-COMMON = dict(window=W, gap=GAP, d=16, batch=256, lr=3e-4, schedule="cosine", min_lr=0.05)
+COMMON = dict(window=W, gap=GAP, d=16, batch=256, lr=3e-4, schedule="cosine", min_lr=0.05, stream_version=2)
 CONTROLS = dict(untrained=("jepa_shared", dict(steps=0)), raw_flat=("raw_flat", {}), raw_lagcov=("raw_lagcov", {}),
                 oracle=("oracle", dict(input="latent", feature="lagcov")))
-DETECTORS = [dict(type="hmm", k=16), dict(type="gmm", k=16)]   # primary: hmm; secondary: gmm (no max over detectors)
+DETECTORS = [dict(type="hmm", k=16, select="persistence"), dict(type="gmm", k=16, select="persistence")]   # primary: hmm; secondary: gmm (no max over detectors)
 
 
 def dataset(cond, quick=False):
@@ -51,8 +51,10 @@ def write_sweep(path, steps=20000, seeds=(0, 1, 2)):
                      "hp.eval_detectors=[gmm,hmm]", "hp.keep_ckpts=[2000,5000,20000]"],
         baselines=["raw_flat", "raw_lagcov"], baseline_hparams={"hp.window": [W]},
         detectors=["hmm", "gmm"], plugins=[],
-        slurm=dict(partition="gpu", gres="gpu:1", time="12:00:00", signal_lead=900, cpus=8, mem="32G",
-                   max_parallel=40, workers=6, setup="source ~/.bashrc; conda activate changepoint-jepa",
+        slurm=dict(partition="workq", gres="gpu:1", time="12:00:00", signal_lead=900, cpus=32, mem="64G",
+                   max_parallel=40, workers=6,
+                   setup='export PATH=/lus/lfs1aip2/projects/b5ci/Quique/miniforge3/bin:$PATH; '
+                         'python -c "import torch; assert torch.cuda.is_available()" || exit 1',
                    cache="cpbench_cache"))
     OmegaConf.save(OmegaConf.create(cfg), path)
     with open(path) as fh:

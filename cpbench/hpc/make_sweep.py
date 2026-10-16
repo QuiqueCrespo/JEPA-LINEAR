@@ -94,8 +94,29 @@ def expand(sw, dataset_paths):
     return lines
 
 
-def main(path):
+def main(path, dry_run=False):
     sw = OmegaConf.load(path)
+    if dry_run:
+        spec = sw.datasets if isinstance(sw.datasets, str) else OmegaConf.to_container(sw.datasets)
+        items = spec if isinstance(spec, list) else [spec]
+        cfgs = [c for it in items for c in (expand_grid(it) if isinstance(it, str) or is_grid(it) else [it])]
+        import hashlib, json
+        paths = ["dataset_" + hashlib.sha256(json.dumps(c, sort_keys=True).encode()).hexdigest() for c in cfgs]
+        lines = expand(sw, paths)
+        from cpbench.features import make_learner
+        identities = []
+        for line in lines:
+            cfg = OmegaConf.from_dotlist(line.split())
+            hp = OmegaConf.to_container(cfg.hp) if "hp" in cfg else {}
+            if cfg.features in sw.get("learners", []):
+                hp["seed"] = cfg.seed
+            f = make_learner(cfg.features, **hp)
+            identities.append((cfg.dataset, f.name, f.tag(), f.params.get("seed", 0)))
+        if len(identities) != len(set(identities)):
+            raise ValueError("Duplicate resolved learner identities in sweep")
+        trained = len(cfgs) * len(sw.get("learners", [])) * len(_product(sw.get("hparams"))) * len(sw.seeds)
+        print(f"{len(lines)} distinct job identities (dataset specifications): {trained} trained + {len(lines) - trained} baseline; no files written")
+        return lines
     d = os.path.join("sweeps", sw.name); os.makedirs(os.path.join(d, "logs"), exist_ok=True)
     lines = expand(sw, write_datasets(sw, d))
     manifest = os.path.abspath(os.path.join(d, "manifest.txt"))
@@ -112,4 +133,9 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("path")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    main(args.path, dry_run=args.dry_run)

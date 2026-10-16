@@ -242,6 +242,7 @@ overrides:
 - hp.lr=0.0003
 - hp.schedule=cosine
 - hp.min_lr=0.05
+- hp.stream_version=2
 - hp.steps=20000
 - hp.warmup=1000
 - hp.eval_every=2000
@@ -259,13 +260,14 @@ detectors:
 - gmm
 plugins: []
 slurm:
-  partition: gpu
+  partition: workq
   gres: gpu:1
   time: '12:00:00'
   signal_lead: 900
-  cpus: 8
-  mem: 32G
+  cpus: 32
+  mem: 64G
   max_parallel: 40
   workers: 6
-  setup: source ~/.bashrc; conda activate changepoint-jepa
+  setup: export PATH=/lus/lfs1aip2/projects/b5ci/Quique/miniforge3/bin:$PATH; python
+    -c "import torch; assert torch.cuda.is_available()" || exit 1
   cache: cpbench_cache

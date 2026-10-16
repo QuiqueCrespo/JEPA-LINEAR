@@ -21,10 +21,10 @@ if __name__ == "__main__":                       # DataLoader workers re-import 
     elif mode == "pilot":
         df = evaluate(PILOT, 3000, [0], "cpbench_runs_recon_vs_pred_pilot")
     elif mode == "hpc":
-        df = evaluate(CONDITIONS, 20000, [0, 1, 2], sys.argv[2])
+        df = evaluate(CONDITIONS, 20000, [0, 1, 2], sys.argv[2], load_only=True, diagnostics="--diagnostics" in sys.argv)
     else:
         raise SystemExit(__doc__)
     os.makedirs("cpbench_results", exist_ok=True)
     df.to_csv(f"cpbench_results/recon_vs_pred_{mode}.csv", index=False)
     pd.set_option("display.width", 250); pd.set_option("display.max_colwidth", 120)
-    print(verdicts(df).to_string(index=False))
+    print(verdicts(df, confirmatory=mode == "hpc").to_string(index=False))

@@ -28,7 +28,7 @@ def persistent_mixture(Z, K, k, seed, scalings=SCALINGS, seeds=3):
     return P, post
 
 
-def persistent_hmm(Z, K, k, seed, select, restarts, autoregressive=False, top=3):
+def persistent_hmm(Z, K, k, seed, select, restarts, autoregressive=False, top=3, return_switch=False):
     """Baum-Welch started from the `top` most persistent mixture partitions (only the best one when select="whiten");
     EM can drift towards higher-likelihood but non-persistent partitions, so the final labels are again chosen by
     persistence.  Returns labels and posteriors (for t >= 1 when autoregressive)."""
@@ -39,14 +39,14 @@ def persistent_hmm(Z, K, k, seed, select, restarts, autoregressive=False, top=3)
         init = post0.argmax(1)
         if autoregressive:
             P3 = P.reshape(R, T, -1)
-            lab, post = hmm_regression(flat(P3[:, :-1]), flat(P3[:, 1:]), K, [T - 1] * R, init=init.reshape(R, T)[:, 1:].ravel(),
-                                       restarts=restarts, return_post=True)
+            lab, post, switches = hmm_regression(flat(P3[:, :-1]), flat(P3[:, 1:]), K, [T - 1] * R, init=init.reshape(R, T)[:, 1:].ravel(),
+                                       restarts=restarts, return_post=True, return_switch=True)
         else:
-            lab, post = hmm_regression(None, P, K, [T] * R, init=init, restarts=restarts, return_post=True)
+            lab, post, switches = hmm_regression(None, P, K, [T] * R, init=init, restarts=restarts, return_post=True, return_switch=True)
         score = persistence(lab, R)
         if best is None or score > best[0]:
-            best = (score, lab, post)
-    return best[1], best[2]
+            best = (score, lab, post, switches)
+    return best[1:] if return_switch else (best[1], best[2])
 
 
 def _pad_first(lab, R):
@@ -73,8 +73,8 @@ class HMM(Detector):
 
     def detect(self, Z, K, seed=0):
         R, T, _ = Z.shape
-        lab, post = persistent_hmm(Z, K, self.k, seed, self.select, self.restarts)
-        return dict(labels=lab.reshape(R, T), cp_score=switch_probability(post, [T] * R).reshape(R, T))
+        lab, post, sw = persistent_hmm(Z, K, self.k, seed, self.select, self.restarts, return_switch=True)
+        return dict(labels=lab.reshape(R, T), cp_score=sw.reshape(R, T))
 
 
 @register_detector("arhmm")
@@ -85,8 +85,8 @@ class ARHMM(Detector):
 
     def detect(self, Z, K, seed=0):
         R, T, _ = Z.shape
-        lab, post = persistent_hmm(Z, K, self.k, seed, self.select, self.restarts, autoregressive=True)
-        sw = switch_probability(post, [T - 1] * R).reshape(R, T - 1)
+        lab, post, sw = persistent_hmm(Z, K, self.k, seed, self.select, self.restarts, autoregressive=True, return_switch=True)
+        sw = sw.reshape(R, T - 1)
         return dict(labels=_pad_first(lab, R), cp_score=np.concatenate([np.zeros((R, 1)), sw], 1))
 
 
@@ -184,5 +184,5 @@ class TemporalExcess(Detector):
         C = flat(P) @ F[:, sel]
         Q = (C - C.mean(0)) / C.std(0)
         init = GaussianMixture(K, n_init=3, random_state=seed).fit(Q).predict(Q)
-        lab, post = hmm_regression(None, Q, K, [T] * R, init=init, restarts=self.restarts, return_post=True)
-        return dict(labels=lab.reshape(R, T), cp_score=switch_probability(post, [T] * R).reshape(R, T), **info)
+        lab, post, switches = hmm_regression(None, Q, K, [T] * R, init=init, restarts=self.restarts, return_post=True, return_switch=True)
+        return dict(labels=lab.reshape(R, T), cp_score=switches.reshape(R, T), **info)

@@ -110,14 +110,16 @@ class Dataset:
         return f"Dataset({self.info.id}, D={self.D})"
 
     # ------------------------------------------------------------------ sampling
-    def sample(self, R, n, rng, burn=256, fix=None):
+    def sample(self, R, n, rng, burn=256, fix=None, source_seeds=None):
         """R series of n samples.  Returns obs (R,n,D) float32, S_s (R,n) target regimes, cp_s (R,n) bool,
         clean (R,n,d_clean) float32 regime-driven source channels before transforms, mask (R,n,D) bool if a transform
         drops data, oracle arrays (e.g. hidden), and S_<name> for non-target regimes.
         fix={name: k} holds regime process `name` at regime k throughout.  Regime paths are drawn first, then sources,
         then transforms, all from rng, so two calls with equal rng seeds and different `fix` are counterfactual pairs:
         the same innovations and noise draws under different regimes (e.g. one hidden trajectory seen through two
-        sensor conditions)."""
+        sensor conditions). source_seeds={source_index: seed} resamples selected top-level sources while
+        preserving the original RNG consumption, other sources, regime paths and observation noise. Standardisation
+        remains calibrated to this dataset, so paired interventions use the same observation map."""
         grid = max([r.grid or 1 for r in self.regimes.values()])
         lead = burn + rng.integers(grid, size=R)                         # per-series random phase of internal grids
         N = n + burn + grid
@@ -129,8 +131,16 @@ class Dataset:
         ctxs = {k: Context(p, soft_weights(p, self.regimes[k].K, self.regimes[k].ramp), self.regimes[k].K, rng)
                 for k, p in paths.items()}
         xs, clean, oracle = [], [], {}
-        for s in self.sources:
-            raw = s.simulate(ctxs[s.regime]); x = s.scale * raw; xs.append(x)
+        source_seeds = source_seeds or {}
+        if any(i not in range(len(self.sources)) for i in source_seeds):
+            raise ValueError("source_seeds keys must be valid top-level source indices")
+        for source_index, s in enumerate(self.sources):
+            raw = s.simulate(ctxs[s.regime])
+            if source_index in source_seeds:
+                c = ctxs[s.regime]
+                paired_ctx = Context(c.S, c.W, c.K, np.random.default_rng(source_seeds[source_index]))
+                raw = s.simulate(paired_ctx)
+            x = s.scale * raw; xs.append(x)
             if s.driven:
                 clean.append(x)
             oracle.update(s.oracle)

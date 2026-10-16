@@ -3,9 +3,10 @@ posteriors as well so that change-point scores can be read from them."""
 import numpy as np
 
 
-def forward_backward(logB, A, pi, lengths):
+def forward_backward(logB, A, pi, lengths, return_switch=False):
     """Scaled forward-backward over several sequences. Returns posteriors, expected transition counts, log-lik."""
     N, K = logB.shape
+    switches = np.zeros(N)
     gamma, xi, ll, start = np.zeros((N, K)), np.zeros((K, K)), 0.0, 0
     for L in lengths:
         lb = logB[start: start + L]
@@ -21,12 +22,17 @@ def forward_backward(logB, A, pi, lengths):
         g = alpha * beta
         gamma[start: start + L] = g / g.sum(1, keepdims=True)
         xi += A * (alpha[:-1].T @ (B[1:] * beta[1:] / c[1:, None]))
+        if return_switch:
+            future = B[1:] * beta[1:]
+            norm = ((alpha[:-1] @ A) * future).sum(1)
+            same = (alpha[:-1] * np.diag(A) * future).sum(1)
+            switches[start + 1:start + L] = np.clip(1 - same / np.maximum(norm, 1e-300), 0, 1)
         ll += np.log(c).sum() + m.sum()
         start += L
-    return gamma, xi, ll
+    return (gamma, xi, ll, switches) if return_switch else (gamma, xi, ll)
 
 
-def hmm_regression(X, Y, K, lengths, iters=40, restarts=3, seed=0, init=None, return_post=False):
+def hmm_regression(X, Y, K, lengths, iters=40, restarts=3, seed=0, init=None, return_post=False, return_switch=False):
     """HMM whose hidden state k emits Y_t ~ N(A_k [X_t, 1], Sigma_k), fitted by Baum-Welch.
     X=None: Gaussian HMM.  X=z_{t-1}, Y=z_t: autoregressive HMM (switching linear dynamics)."""
     rng = np.random.default_rng(seed)
@@ -45,15 +51,17 @@ def hmm_regression(X, Y, K, lengths, iters=40, restarts=3, seed=0, init=None, re
                 E = Y - Xd @ Ak
                 Sig = (E * w[:, None]).T @ E / w.sum() + 1e-4 * np.eye(dy)
                 logB[:, k] = -0.5 * np.linalg.slogdet(Sig)[1] - 0.5 * np.einsum("ni,ij,nj->n", E, np.linalg.inv(Sig), E)
-            R, xi, ll = forward_backward(logB, A, pi, lengths)
-            A = xi / xi.sum(1, keepdims=True)
+            R, xi, ll, switches = forward_backward(logB, A, pi, lengths, return_switch=True)
+            A = (xi + 1e-12) / (xi.sum(1, keepdims=True) + K * 1e-12)
         if ll > best_ll:
-            best, best_ll = R.copy(), ll
+            best, best_ll, best_switches = R.copy(), ll, switches.copy()
+    if return_switch:
+        return best.argmax(1), best, best_switches
     return (best.argmax(1), best) if return_post else best.argmax(1)
 
 
 def switch_probability(post, lengths):
-    """P(state_t != state_{t-1}) approximated from marginal posteriors (0 at sequence starts)."""
+    """Independent-marginal change score (e.g. GMM), not a calibrated HMM transition probability."""
     out = np.zeros(len(post)); start = 0
     for L in lengths:
         g = post[start: start + L]

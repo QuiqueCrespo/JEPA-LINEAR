@@ -12,7 +12,10 @@ def _flat(Z):
 
 def probes(Z, S, seed=0):
     """Supervised diagnostics on held-out series: linear probe on single windows, MLP on window pairs."""
-    R = Z.shape[0]; h = R // 2
+    R = Z.shape[0]
+    if R < 2:
+        raise ValueError("Probes require at least two independent series")
+    h = R // 2
     out = {}
     sc = StandardScaler().fit(_flat(Z[:h]))
     lin = LogisticRegression(max_iter=3000, C=0.1).fit(sc.transform(_flat(Z[:h])), S[:h].ravel())

@@ -28,10 +28,10 @@ class TorchFeatureLearner(FeatureLearner):
     defaults = dict(window=32, gap=32, steps=20000, batch=256, lr=3e-4, warmup=1000, weight_decay=1e-4, clip=5.0,
                     schedule="constant", min_lr=0.0,
                     d=124, H=256, backbone="tcn", workers=4, device_name="auto", log_every=100, eval_every=2000,
-                    ckpt_every=2000, eval_detectors=["gmm"], eval_probes="linear", keep_ckpts=[], seed=0)
+                    ckpt_every=2000, eval_detectors=["gmm"], eval_probes="linear", keep_ckpts=[], seed=0, stream_version=2)
     RUNTIME = ("workers", "device_name", "log_every", "eval_every", "ckpt_every", "eval_detectors", "eval_probes", "keep_ckpts")
     LEGACY = dict(schedule="constant", min_lr=0.0)   # left out of the run identity at these values (older runs keep theirs)
-    TRAIN_KEYS = ("window", "gap", "steps", "batch", "lr", "warmup", "weight_decay", "clip", "schedule", "min_lr", "seed") + RUNTIME
+    TRAIN_KEYS = ("window", "gap", "steps", "batch", "lr", "warmup", "weight_decay", "clip", "schedule", "min_lr", "seed", "stream_version") + RUNTIME
     trainable = True
     EXIT_REQUEUE = 3
 
@@ -82,7 +82,7 @@ class TorchFeatureLearner(FeatureLearner):
         def write(rec):
             if logf: logf.write(json.dumps(rec) + "\n"); logf.flush()
         val = task.val_set()
-        loader = iter(torch.utils.data.DataLoader(Stream(task.config(), hp["batch"], self.window, hp["gap"], hp["seed"], step),
+        loader = iter(torch.utils.data.DataLoader(Stream(task.config(), hp["batch"], self.window, hp["gap"], hp["seed"], step, hp["stream_version"]),
                                                   batch_size=None, num_workers=hp["workers"],
                                                   persistent_workers=hp["workers"] > 0,
                                                   prefetch_factor=4 if hp["workers"] > 0 else None))

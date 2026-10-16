@@ -18,7 +18,8 @@ from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, b
 def best_perm_acc(true, pred, K):
     M = np.zeros((K, max(K, pred.max() + 1)))
     np.add.at(M, (true, pred), 1)
-    r, c = linear_sum_assignment(-M)
+    weights = M / np.maximum(M.sum(1, keepdims=True), 1)
+    r, c = linear_sum_assignment(-weights)
     mapping = dict(zip(c, r))
     return balanced_accuracy_score(true, [mapping.get(p, -1) for p in pred])
 
