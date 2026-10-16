@@ -13,7 +13,7 @@ detector or a learner later only computes what is new.
 <out>/<signal>_<dataset digest>/<learner>/<learner tag>/s<seed>/
     learner.json, model.pt, log.jsonl                    the fitted learner
     <protocol>/features.npz                              features of the test split (protocol = test split size)
-    <protocol>/<detector>_<hash>.csv, probe.csv           results (CSV: small, and independent of pyarrow versions)"""
+    <protocol>/<detector>_<hash>.csv, probe_v3.csv          results (CSV: small, and independent of pyarrow versions)"""
 import hashlib, json, os, time
 import numpy as np
 import pandas as pd
@@ -106,7 +106,7 @@ class Benchmark:
                     learner_params=json.dumps(f.identity(), sort_keys=True, default=str))
         dfs = []
         for det in self.detectors + (["probe"] if self.probes else []):
-            stem = os.path.join(base, "probe_v2" if det == "probe" else f"{det.name}_{_hash(det.params)}_scoring_v2")
+            stem = os.path.join(base, "probe_v3" if det == "probe" else f"{det.name}_{_hash(det.params)}_scoring_v2")
             cached = read_result(stem) if not refit else None
             if cached is not None:
                 dfs.append(cached); continue

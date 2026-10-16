@@ -15,16 +15,20 @@ W, GAP = 64, 32                                     # window and context-target 
 TAU = dict(fast=16, slow=2000)                      # nuisance AR(1) timescales (samples); W + GAP = 96
 CONDITIONS = dict(N0=("fast", 0.0), F1=("fast", 1.0), F2=("fast", 2.0), S1=("slow", 1.0), S2=("slow", 2.0))
 PILOT = ("N0", "F2", "S2")
+PILOT_EVAL_SEED, EVAL_SEED = 0, 20261016            # test / val series: the pilot used dataset seed 0; the HPC run uses
+                                                    # fresh series (pilot-informed amendment).  Renderings keep seed 0.
 
 LEARNERS = dict(ae="reconstruction", vae="reconstruction", jepa_separate="prediction", jepa_shared="prediction",
                 cpc="contrastive (future target)", ts2vec="contrastive (same-time target)")
+FAILED_TO_TRAIN = ("cpc",)   # pre-declared before HPC training (label-free check, README): run and reported, never dropped,
+                             # but outside the collapse gate; it enters no confirmatory hypothesis
 COMMON = dict(window=W, gap=GAP, d=16, batch=256, lr=3e-4, schedule="cosine", min_lr=0.05, stream_version=2)
 CONTROLS = dict(untrained=("jepa_shared", dict(steps=0)), raw_flat=("raw_flat", {}), raw_lagcov=("raw_lagcov", {}),
                 oracle=("oracle", dict(input="latent", feature="lagcov")))
 DETECTORS = [dict(type="hmm", k=16, select="persistence"), dict(type="gmm", k=16, select="persistence")]   # primary: hmm; secondary: gmm (no max over detectors)
 
 
-def dataset(cond, quick=False):
+def dataset(cond, quick=False, eval_seed=EVAL_SEED):
     speed, sigma_n = CONDITIONS[cond]
     return dict(
         regime=dict(type="markov", K=2, dwell=600),
@@ -36,7 +40,7 @@ def dataset(cond, quick=False):
                       sources=[dict(type="ar", d=2, phi=float(np.exp(-1 / TAU[speed])), expose="nuisance")],
                       transforms=[dict(type="render", D=D, kind="fourier")])],
         transforms=[dict(type="fold", blocks=2), dict(type="noise", sigma=NOISE)],
-        seed=0,
+        seed=0, **({} if eval_seed == PILOT_EVAL_SEED else dict(eval_seed=eval_seed)),
         splits=dict(test=[2, 3000], val=[2, 3000]) if quick else dict(test=[8, 16000], val=[4, 8000]))
 
 

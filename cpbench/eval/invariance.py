@@ -22,7 +22,7 @@ from cpbench.data.windows import majority_labels
 
 
 def paired_distance(learner, ds, fix_a, fix_b, R=8, n=4000, seed=0):
-    rng_seed = [ds.seed, 7700 + seed]
+    rng_seed = [ds.evaluation_seed, 7700 + seed]
     za = learner.represent(ds.sample(R, n, np.random.default_rng(rng_seed), fix=fix_a))[0]["features"]
     zb = learner.represent(ds.sample(R, n, np.random.default_rng(rng_seed), fix=fix_b))[0]["features"]
     za, zb = za.reshape(-1, za.shape[-1]).astype(np.float64), zb.reshape(-1, zb.shape[-1]).astype(np.float64)
@@ -90,9 +90,9 @@ def resampled_nuisance_distance(learner, ds, source, R=4, n=2048, seed=0):
     """Secondary paired intervention diagnostic: same dynamics and noise, independent nuisance realisation.
     Distance is normalised by random pooled-window distance; it is not a decoding score or calibrated probability.
     """
-    rng_seed = [ds.seed, 7800 + seed]
+    rng_seed = [ds.evaluation_seed, 7800 + seed]
     a = ds.sample(R, n, np.random.default_rng(rng_seed))
-    b = ds.sample(R, n, np.random.default_rng(rng_seed), source_seeds={source: [ds.seed, 7900 + seed]})
+    b = ds.sample(R, n, np.random.default_rng(rng_seed), source_seeds={source: [ds.evaluation_seed, 7900 + seed]})
     za = learner.represent(a)[0]["features"]
     zb = learner.represent(b)[0]["features"]
     za, zb = za.reshape(-1, za.shape[-1]), zb.reshape(-1, zb.shape[-1])

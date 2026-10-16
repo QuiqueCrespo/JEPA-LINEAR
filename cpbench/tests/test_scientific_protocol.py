@@ -13,8 +13,8 @@ from cpbench.detectors.hmm import forward_backward
 from cpbench.eval.metrics import best_perm_acc
 from cpbench.features.stream import Stream
 from cpbench.hpc.make_sweep import main as sweep_main
-from experiments.recon_vs_pred.design import CONDITIONS, CONTROLS, LEARNERS
-from experiments.recon_vs_pred.experiment import _boot_diff, _loss_drop, verdicts
+from experiments.recon_vs_pred.design import CONDITIONS, CONTROLS, EVAL_SEED, LEARNERS, PILOT_EVAL_SEED, dataset
+from experiments.recon_vs_pred.experiment import HYPOTHESES, PRED, PROTOCOL, RECON, _boot_diff, _loss_drop, verdicts
 
 
 def complete_results():
@@ -23,13 +23,15 @@ def complete_results():
         for l in (*LEARNERS, *CONTROLS):
             for s in ((0, 1, 2) if l in LEARNERS else (0,)):
                 rows.append(dict(cond=c, learner=l, seed=s, probe=0.95 if l != 'untrained' else 0.6,
-                                 nuis_r2=0.7, hmm=0.97, gmm=0.9, eff_rank=8.0, loss_drop=0.5,
-                                 steps=20000 if l in LEARNERS else 0, protocol='audit_v2'))
+                                 probe_mlp_single=0.95 if l != 'untrained' else 0.6, probe_mlp_pair=0.95,
+                                 nuis_mlp_r2=0.7, nuis_r2=0.7, hmm=0.97, gmm=0.9, eff_rank=8.0, loss_drop=0.5,
+                                 steps=20000 if l in LEARNERS else 0, protocol=PROTOCOL, eval_seed=EVAL_SEED))
     return pd.DataFrame(rows)
 
 
 @pytest.mark.parametrize('damage', ['missing_oracle', 'missing_seed', 'duplicate', 'nan_loss', 'nan_rank',
-                                     'oracle_failure', 'collapse', 'pilot_budget', 'legacy', 'no_trained'])
+                                     'oracle_failure', 'collapse', 'pilot_budget', 'legacy', 'no_trained',
+                                     'audit_v2_only', 'pilot_eval_series', 'nan_mlp_probe', 'no_mlp_nuisance'])
 def test_invalid_confirmatory_results_never_decide_hypotheses(damage):
     df = complete_results()
     if damage == 'missing_oracle':
@@ -50,18 +52,26 @@ def test_invalid_confirmatory_results_never_decide_hypotheses(damage):
         df.loc[df.learner.isin(LEARNERS), 'steps'] = 3000
     elif damage == 'legacy':
         df = df.drop(columns='protocol')
+    elif damage == 'audit_v2_only':
+        df['protocol'] = 'audit_v2'
+    elif damage == 'pilot_eval_series':
+        df.loc[df.cond == 'F2', 'eval_seed'] = PILOT_EVAL_SEED
+    elif damage == 'nan_mlp_probe':
+        df.loc[0, 'probe_mlp_single'] = np.nan
+    elif damage == 'no_mlp_nuisance':
+        df = df.drop(columns='nuis_mlp_r2')
     else:
         df = df[~df.learner.isin(LEARNERS)]
     out = verdicts(df)
     assert (out[out.test.str.startswith('H')].verdict == 'void').all()
-    assert len(out[out.test.str.startswith('H')]) == 4
+    assert len(out[out.test.str.startswith('H')]) == len(HYPOTHESES) == 5
 
 
 def test_valid_and_exploratory_verdicts():
     df = complete_results()
     out = verdicts(df)
     assert out[out.test.str.startswith('gate:')].verdict.eq('pass').all()
-    assert len(out[out.test.str.startswith('H')]) == 4
+    assert len(out[out.test.str.startswith('H')]) == 5
     pilot = verdicts(df, confirmatory=False)
     assert pilot[pilot.test.str.startswith('H')].verdict.eq('exploratory').all()
     assert verdicts(pd.DataFrame()).verdict.iloc[-1] == 'void'
@@ -194,3 +204,85 @@ def test_paired_nuisance_distance_is_zero_without_nuisance():
                       transforms=[dict(type='fold', blocks=2)], standardize=False))
     f = make_learner('raw_flat', window=8)
     assert resampled_nuisance_distance(f, ds, source=1, R=2, n=64) == 0
+
+
+def _hyp(out, prefix):
+    return out[out.test.str.startswith(prefix)].verdict.item()
+
+
+def _set(df, cond, learners, metric, value):
+    df.loc[(df.cond == cond) & df.learner.isin(learners), metric] = value
+
+
+def test_h1_is_decided_by_single_window_mlp_probe_not_linear_probe():
+    df = complete_results()
+    _set(df, 'F2', RECON, 'probe', 0.5)                      # large linear gap, no MLP gap
+    assert _hyp(verdicts(df), 'H1:') == 'refuted'
+    df = complete_results()
+    _set(df, 'F2', RECON, 'probe_mlp_single', 0.8)           # MLP gap 0.15 on every seed
+    out = verdicts(df)
+    assert _hyp(out, 'H1:') == 'supported'
+    assert 'diff +0.150' in out[out.test.str.startswith('H1:')].numbers.item()
+    _set(df, 'F2', RECON, 'probe_mlp_single', 0.88)          # gap 0.07: inconclusive
+    assert _hyp(verdicts(df), 'H1:') == 'inconclusive'
+
+
+def test_h1_and_h3b_require_ci_above_zero():
+    df = complete_results()
+    _set(df, 'F2', PRED, 'hmm', 0.95)
+    for seed, v in zip((0, 1, 2), (1.0, 0.70, 0.75)):        # paired gaps -0.05, +0.25, +0.20: mean 0.133, CI spans 0
+        df.loc[(df.cond == 'F2') & df.learner.isin(RECON) & (df.seed == seed), 'hmm'] = v
+    assert _hyp(verdicts(df), 'H3b') == 'inconclusive'
+    df['probe_mlp_single'] = df['hmm'].where(df.cond == 'F2', df['probe_mlp_single'])
+    assert _hyp(verdicts(df), 'H1:') == 'inconclusive'
+
+
+def test_h2_uses_mlp_nuisance_probe_and_h3_split():
+    df = complete_results()
+    _set(df, 'F2', PRED, 'nuis_mlp_r2', 0.1)
+    _set(df, 'F2', PRED, 'nuis_r2', 0.9)                     # ridge would refute; it is secondary
+    out = verdicts(df)
+    assert _hyp(out, 'H2') == 'supported'
+    assert _hyp(out, 'secondary H2') == 'secondary'
+    _set(df, 'F2', RECON, 'hmm', 0.6)
+    _set(df, 'S2', PRED, 'hmm', 0.97)
+    out = verdicts(df)
+    assert _hyp(out, 'H3a') == 'inconclusive'                 # pred F2 0.97 but not 0.15 above S2
+    assert _hyp(out, 'H3b') == 'supported'                    # pred - recon = 0.37 on every seed
+    assert _hyp(out, 'exploratory: nuisance') == 'exploratory'
+
+
+def test_probe_mlp_single_reads_nonlinear_single_window_information():
+    from cpbench.eval.probes import probes
+    rng = np.random.default_rng(0)
+    Z = rng.normal(size=(4, 500, 2))
+    S = (Z[..., 0] * Z[..., 1] > 0).astype(int)               # XOR-like: invisible to a linear probe
+    out = probes(Z, S)
+    assert out['probe_mlp_single'] > 0.85
+    assert out['probe_mlp_single'] > out['probe_linear'] + 0.2
+
+
+def test_eval_seed_changes_only_evaluation_series():
+    base = dataset('F2', quick=True, eval_seed=PILOT_EVAL_SEED)
+    assert 'eval_seed' not in base                            # pilot construction unchanged
+    fresh = dataset('F2', quick=True)
+    assert fresh['eval_seed'] == EVAL_SEED != PILOT_EVAL_SEED
+    a, b = Dataset(base), Dataset(fresh)
+    assert a.digest() != b.digest()                           # separate run dirs and data caches
+    assert Dataset(b.config()).digest() == b.digest()
+    rng = lambda: np.random.default_rng([3, 1000, 5])         # same renderings, standardisation and training stream
+    np.testing.assert_array_equal(a.train_batch(4, 16, 8, rng())[0], b.train_batch(4, 16, 8, rng())[0])
+    ta, tb = a.test_set(cache=False), b.test_set(cache=False)
+    assert not np.allclose(ta['obs'], tb['obs'])
+    np.testing.assert_array_equal(tb['obs'], b.sample(*b.splits['test'], np.random.default_rng([EVAL_SEED, 2]))['obs'])
+
+
+def test_predeclared_cpc_failure_is_reported_but_does_not_void():
+    df = complete_results()
+    df.loc[(df.cond == 'F2') & (df.learner == 'cpc'), 'eff_rank'] = 1.1
+    out = verdicts(df)
+    assert out[out.test.str.startswith('gate:')].verdict.eq('pass').all()
+    assert '3/15 runs' in out[out.test.str.startswith('reported: pre-declared')].numbers.item()
+    assert not out[out.test.str.startswith('H')].verdict.eq('void').any()
+    df.loc[(df.cond == 'F2') & (df.learner == 'ae'), 'eff_rank'] = 1.1     # any other collapse still voids
+    assert verdicts(df)[lambda o: o.test.str.startswith('H')].verdict.eq('void').all()

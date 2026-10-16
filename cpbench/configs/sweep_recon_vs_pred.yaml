@@ -41,6 +41,7 @@ datasets:
   - type: noise
     sigma: 0.3
   seed: 0
+  eval_seed: 20261016
   splits:
     test:
     - 8
@@ -84,6 +85,7 @@ datasets:
   - type: noise
     sigma: 0.3
   seed: 0
+  eval_seed: 20261016
   splits:
     test:
     - 8
@@ -127,6 +129,7 @@ datasets:
   - type: noise
     sigma: 0.3
   seed: 0
+  eval_seed: 20261016
   splits:
     test:
     - 8
@@ -170,6 +173,7 @@ datasets:
   - type: noise
     sigma: 0.3
   seed: 0
+  eval_seed: 20261016
   splits:
     test:
     - 8
@@ -213,6 +217,7 @@ datasets:
   - type: noise
     sigma: 0.3
   seed: 0
+  eval_seed: 20261016
   splits:
     test:
     - 8

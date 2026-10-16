@@ -8,7 +8,8 @@
       "transforms": [{"type": "project", "D": 64}, {"type": "noise", "sigma": 0.5}],   # nonlinearities, corruption
       "standardize": True,                                           # per-channel standardisation at the end
       "seed": 0, "splits": {"test": [16, 64000], "val": [4, 64000]}, "margin": 32,
-    }
+      "eval_seed": None,     # optional: draw the test / val series from this seed instead (fresh evaluation trajectories;
+    }                        # sources, renderings, standardisation and training stream still follow `seed`)
     ds = Dataset(cfg)    # or Dataset("my_dataset.yaml"); grids of datasets: cpbench.data.expand(...)
 
 A source whose parameters depend on the regime is part of the SIGNAL, otherwise it is a NUISANCE; the top-level
@@ -49,6 +50,7 @@ class Dataset:
         self.transforms = [build("transform", t) for t in cfg.get("transforms", [])]
         self.standardize = cfg.get("standardize", True)
         self.seed = cfg.get("seed", 0)
+        self.eval_seed = cfg.get("eval_seed")
         self.splits = {**DEFAULT_SPLITS, **cfg.get("splits", {})}
         self.margin = cfg.get("margin", 32)
         for i, s in enumerate(self.sources):                              # fix each source's random parameters
@@ -79,7 +81,8 @@ class Dataset:
         """The full construction as a plain dict; Dataset(ds.config()) rebuilds an identical dataset."""
         return dict(regimes={k: r.spec() for k, r in self.regimes.items()}, target=self.target,
                     sources=[s.spec() for s in self.sources], transforms=[t.spec() for t in self.transforms],
-                    standardize=self.standardize, seed=self.seed, splits=self.splits, margin=self.margin)
+                    standardize=self.standardize, seed=self.seed, splits=self.splits, margin=self.margin,
+                    **({} if self.eval_seed is None else dict(eval_seed=self.eval_seed)))
 
     def digest(self):
         """Hash of the construction (splits excluded: the same dataset at another test size keeps its identity)."""
@@ -163,16 +166,21 @@ class Dataset:
         out.update({f"S_{k}": crop(v) for k, v in b.regimes.items()})
         return out
 
+    @property
+    def evaluation_seed(self):
+        """Seed of the fixed test / val series (eval_seed if set, else seed); part of the digest when set."""
+        return self.seed if self.eval_seed is None else self.eval_seed
+
     def _cached(self, split, seed_tag, cache=True):
         R, n = self.splits[split]
         if not cache:
-            return self.sample(R, n, np.random.default_rng([self.seed, seed_tag]))
+            return self.sample(R, n, np.random.default_rng([self.evaluation_seed, seed_tag]))
         os.makedirs(CACHE, exist_ok=True)
         path = os.path.join(CACHE, f"{self.digest()}_{split}_{R}x{n}.npz")
         if os.path.exists(path):
             with np.load(path) as z:
                 return {k: z[k] for k in z.files}
-        d = self.sample(R, n, np.random.default_rng([self.seed, seed_tag]))
+        d = self.sample(R, n, np.random.default_rng([self.evaluation_seed, seed_tag]))
         np.savez(path, **d)
         return d
 
