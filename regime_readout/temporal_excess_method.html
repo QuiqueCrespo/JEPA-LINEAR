@@ -1,0 +1,209 @@
+<title>Temporal-Excess Contrast ICA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column (~68ch) with full-width tables/figures that scroll inside their own boxes */
+:root {
+  --bg: #f6f7f8; --surface: #ffffff; --fg: #1b2228; --muted: #5b6670; --rule: #d9dee3;
+  --accent: #0f6e78; --accent-soft: #e2f0f1; --warn: #9a5b12; --warn-soft: #f7ecdc; --null: #a23b3b;
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12171b; --surface: #1a2026; --fg: #e3e8ec; --muted: #98a4ae; --rule: #2e3740;
+  --accent: #5fc0c9; --accent-soft: #173438; --warn: #e0a85c; --warn-soft: #362a19; --null: #e07a7a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12171b; --surface: #1a2026; --fg: #e3e8ec; --muted: #98a4ae; --rule: #2e3740;
+  --accent: #5fc0c9; --accent-soft: #173438; --warn: #e0a85c; --warn-soft: #362a19; --null: #e07a7a; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 400 16px/1.6 var(--body); }
+main { max-width: 760px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 72px; display: grid; gap: 8px; }
+main > * { min-width: 0; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.2rem; }
+h2 { font-size: 1.45rem; margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.12rem; margin-top: 18px; }
+p, ul, ol { margin: 6px 0; max-width: 68ch; }
+li { margin: 4px 0; }
+.lede { font-size: 1.08rem; color: var(--muted); }
+.meta { font: 500 0.78rem/1.4 var(--mono); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+code, .m { font-family: var(--mono); font-size: 0.88em; }
+.eq { font-family: var(--mono); font-size: 0.92rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 10px 14px; overflow-x: auto; white-space: pre; margin: 8px 0; }
+.scroll { overflow-x: auto; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; font-variant-numeric: tabular-nums; background: var(--surface); }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: top; }
+th { font-weight: 600; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+td.n { text-align: right; font-family: var(--mono); white-space: nowrap; }
+tr.hi td { background: var(--accent-soft); }
+.callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; margin: 12px 0; }
+.caveat { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 12px 16px; margin: 12px 0; }
+.callout p, .caveat p { margin: 4px 0; }
+figure { margin: 14px 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 4px; padding: 14px; }
+figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+svg text { fill: var(--fg); font-family: var(--mono); font-size: 11px; }
+svg .axis { stroke: var(--rule); }
+.bar-reg { fill: var(--accent); }
+.bar-oth { fill: var(--muted); opacity: 0.55; }
+.nullline { stroke: var(--null); stroke-dasharray: 4 3; }
+.nulltxt { fill: var(--null); }
+ol.steps > li { margin: 10px 0; }
+a { color: var(--accent); }
+</style>
+
+<main>
+  <div class="meta">JEPA-LINEAR · regime readout · 7 Oct 2026</div>
+  <h1>Temporal-Excess Contrast ICA</h1>
+  <p class="lede">A label-free way to read discrete regimes out of a SIGReg-trained JEPA latent. SIGReg makes the latent Gaussian one window at a time, but the regime still shows up as jumps over time. The method looks for directions that are Gaussian in the marginal and heavy-tailed in window-to-window differences.</p>
+
+  <h2>The problem it solves</h2>
+  <p>The separate-encoder JEPA trained with a one-window gap encodes the regime well: a supervised linear probe reaches 0.98. Every unsupervised readout we tried on single windows sat at chance (0.25 for K = 4): GMM, spectral and subspace clustering, HMM, marginal ICA, switching regression and predictor residuals.</p>
+  <p>The reason is the regulariser. SIGReg pushes the marginal law of each latent toward an isotropic Gaussian. The regime is a mean shift spread over a few directions, and in those directions the single-window marginal is close to Gaussian. Nothing in one window singles them out. The regime differs from the other factors only in how it moves over time. It stays put for about 10 windows and then jumps, while the nuisance factors drift continuously or burst.</p>
+
+  <h2>Key idea</h2>
+  <p>Take the difference between the mean latent just after time <span class="m">t</span> and just before it. For a piecewise-constant regime this contrast is near zero most of the time and large at the rare switches. That is a sparse, heavy-tailed distribution with high excess kurtosis. The marginal stays Gaussian, because SIGReg forces it to.</p>
+  <p>The factors that compete with the regime fail one of the two conditions:</p>
+  <ul>
+    <li><b>Gaussian AR or slow factors</b> stay Gaussian in both the marginal and the contrast.</li>
+    <li><b>Bursts and outliers</b> are heavy-tailed in the contrast but also in the marginal: kurtosis around 30, because SIGReg does not fully remove them.</li>
+  </ul>
+  <div class="callout"><p><b>Score each candidate direction by its temporal excess:</b> contrast kurtosis minus the absolute value of marginal kurtosis. Only a jump-like factor that SIGReg has Gaussianised scores high.</p></div>
+
+  <h2>Algorithm</h2>
+  <p>Input: an unlabeled multi-series sequence of windows, the trained context encoder <span class="m">f</span>, and the number of regimes K (also estimated in step 6).</p>
+  <ol class="steps">
+    <li><b>Encode and whiten.</b> Encode every window of every series in order: <span class="m">z<sub>t</sub> = f(x<sub>t</sub>) ∈ ℝ<sup>d</sup></span>, with d = 124. Whiten with the pooled covariance: <span class="m">z̃<sub>t</sub> = Σ<sup>−1/2</sup>(z<sub>t</sub> − μ)</span>.</li>
+    <li><b>Window contrasts.</b> Within each series, for each window length m and every t (stride 1):
+      <div class="eq">D_t^(m) = mean(z̃_{t+1} … z̃_{t+m})  −  mean(z̃_{t−m+1} … z̃_t)</div>
+      We used m ∈ {1, 2}, which suits regimes that last about 10 windows. Slower switching needs larger m; the predicted best m in the 1-D model is 3σ / (Δ√q).</li>
+    <li><b>Full ICA on contrasts.</b> Whiten the contrasts (<span class="m">D̃ = (D − D̄) W<sub>D</sub></span>) and run symmetric FastICA with all d components and the cube nonlinearity. Each unmixing row <span class="m">w<sub>j</sub></span> becomes a filter on the whitened latent: <span class="m">a<sub>j</sub> = W<sub>D</sub> w<sub>j</sub></span>. Keeping every component matters. A deflation search that takes the highest-kurtosis directions first spends its first 15 picks on bursts and never reaches the regime.</li>
+    <li><b>Score.</b> For each component take the series <span class="m">c<sub>j</sub>(t) = a<sub>j</sub><sup>⊤</sup> z̃<sub>t</sub></span>:
+      <div class="eq">e_j = kurt( c_j(t+1) − c_j(t) )  −  | kurt( c_j(t) ) |        (excess kurtosis)</div></li>
+    <li><b>Rank and de-duplicate.</b> Sort by <span class="m">e<sub>j</sub></span>. Drop a component if <span class="m">|cos|</span> &gt; 0.8 with one already kept; the same direction is often found at both m values.</li>
+    <li><b>Choose how many directions.</b> Look for the gap in <span class="m">e<sub>j</sub></span>. Here three distinct directions score about 15 and the next one about 3, matching K − 1 = 3. A label-free check is a phase-randomised surrogate of the latent, which keeps every auto- and cross-covariance. Its largest excess was 1.02.</li>
+    <li><b>Cluster.</b> Project the whitened latent onto the span of the selected filters and standardise. Fit a K-component GMM (5 inits), then use its labels to initialise a Gaussian HMM over each series.</li>
+  </ol>
+
+  <figure>
+    <svg viewBox="0 0 640 300" width="100%" role="img" aria-label="Temporal excess of the top ten contrast-ICA components">
+      <line class="axis" x1="160" y1="20" x2="160" y2="270"></line>
+      <line class="axis" x1="160" y1="270" x2="620" y2="270"></line>
+      <!-- scale: 0..16 -> 160..620 (28.75 px per unit) -->
+      <text x="160" y="288" text-anchor="middle">0</text>
+      <text x="303.75" y="288" text-anchor="middle">5</text>
+      <text x="447.5" y="288" text-anchor="middle">10</text>
+      <text x="591.25" y="288" text-anchor="middle">15</text>
+      <line class="nullline" x1="189.3" y1="20" x2="189.3" y2="270"></line>
+      <text class="nulltxt" x="194" y="16">surrogate max 1.02</text>
+      <g>
+        <text x="150" y="38" text-anchor="end">#106 · m=1</text><rect class="bar-reg" x="160" y="27" width="458.3" height="16"></rect>
+        <text x="150" y="62" text-anchor="end">#63 · m=1</text><rect class="bar-reg" x="160" y="51" width="456.8" height="16"></rect>
+        <text x="150" y="86" text-anchor="end">#230 · m=2</text><rect class="bar-reg" x="160" y="75" width="438.9" height="16"></rect>
+        <text x="150" y="110" text-anchor="end">#40 · m=1</text><rect class="bar-reg" x="160" y="99" width="438.8" height="16"></rect>
+        <text x="150" y="134" text-anchor="end">#187 · m=2</text><rect class="bar-reg" x="160" y="123" width="430.4" height="16"></rect>
+        <text x="150" y="158" text-anchor="end">#164 · m=2</text><rect class="bar-reg" x="160" y="147" width="412.1" height="16"></rect>
+        <text x="150" y="182" text-anchor="end">#109 · m=1</text><rect class="bar-oth" x="160" y="171" width="85.0" height="16"></rect>
+        <text x="150" y="206" text-anchor="end">#45 · m=1</text><rect class="bar-oth" x="160" y="195" width="83.8" height="16"></rect>
+        <text x="150" y="230" text-anchor="end">#32 · m=1</text><rect class="bar-oth" x="160" y="219" width="76.7" height="16"></rect>
+        <text x="150" y="254" text-anchor="end">#123 · m=1</text><rect class="bar-oth" x="160" y="243" width="73.3" height="16"></rect>
+      </g>
+    </svg>
+    <figcaption>Temporal excess of the ten highest-scoring contrast-ICA components, step-55k latents. Teal: components with 98–99% of their direction in the regime subspace (labels used only for this colouring). The six teal bars are three directions, each found at both m = 1 and m = 2. Grey: components with ≤ 0.1% regime share.</figcaption>
+  </figure>
+
+  <h2>Results</h2>
+  <p>Separate-encoder JEPA, fresh data per batch, one-window gap, λ = 0.5, step 55k. Readout on 16 held-out test series × 2000 windows, K = 4 regimes, mean dwell 10 windows. Labels were used only for scoring.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Readout</th><th>Dims</th><th>Share in regime subspace</th><th>GMM</th><th>HMM</th></tr></thead>
+    <tbody>
+      <tr class="hi"><td>Temporal excess, top 3</td><td class="n">3</td><td class="n">0.99</td><td class="n">0.996</td><td class="n">0.998</td></tr>
+      <tr><td>Temporal excess, top 2</td><td class="n">2</td><td class="n">0.99</td><td class="n">0.962</td><td class="n">0.974</td></tr>
+      <tr><td>Temporal excess, top 4 / top 6</td><td class="n">4 / 6</td><td class="n">0.74 / 0.50</td><td class="n">0.996</td><td class="n">0.998</td></tr>
+      <tr><td>Every component above the surrogate null</td><td class="n">29</td><td class="n">0.10</td><td class="n">0.994</td><td class="n">0.996</td></tr>
+      <tr><td>Oracle: true regime-mean subspace (labels)</td><td class="n">3</td><td class="n">1.00</td><td class="n">0.996</td><td class="n">0.998</td></tr>
+      <tr><td>Contrast kurtosis alone, top 3</td><td class="n">3</td><td class="n">0.00</td><td class="n">0.253</td><td class="n">0.261</td></tr>
+      <tr><td>GMM on the full whitened latent</td><td class="n">124</td><td class="n">—</td><td class="n">0.253</td><td class="n">—</td></tr>
+      <tr><td>Marginal min-kurtosis directions</td><td class="n">3</td><td class="n">0.96 (1st only)</td><td class="n">0.496</td><td class="n">0.394</td></tr>
+      <tr><td>Residual ICA on Y<sub>t+2</sub> − A z<sub>t</sub></td><td class="n">3</td><td class="n">0.02</td><td class="n">0.622</td><td class="n">0.793</td></tr>
+    </tbody>
+  </table></div>
+  <p>The method matches the oracle and does not depend much on how many directions are kept. Adding non-regime directions does not hurt the GMM/HMM: 29 directions still give 0.996.</p>
+
+  <h3>Why the simpler criteria fail</h3>
+  <div class="scroll"><table>
+    <thead><tr><th>Component type</th><th>Marginal kurtosis</th><th>Contrast kurtosis, m=1</th><th>Temporal excess</th></tr></thead>
+    <tbody>
+      <tr class="hi"><td>Regime directions (3)</td><td class="n">−0.09 … 0.31</td><td class="n">14.6 … 16.2</td><td class="n">14.3 … 15.9</td></tr>
+      <tr><td>Burst-like nuisances (top by contrast kurtosis)</td><td class="n">28 … 35</td><td class="n">15 … 20</td><td class="n">negative</td></tr>
+      <tr><td>Next-best other components</td><td class="n">3.0 … 4.6</td><td class="n">5.9 … 7.2</td><td class="n">2.6 … 3.0</td></tr>
+      <tr><td>Oscillator-like (marginal min-kurtosis search)</td><td class="n">−1.0 … −1.5</td><td class="n">—</td><td class="n">—</td></tr>
+      <tr><td>Phase-surrogate null (max)</td><td class="n">—</td><td class="n">—</td><td class="n">1.02</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><b>Contrast kurtosis alone</b> is captured by bursts: their held-out contrast kurtosis is about 20, higher than the regime's 15. A temporal median filter does not remove them, so they last at least 2 windows.</li>
+    <li><b>Marginal non-Gaussianity alone</b> finds at most one regime direction. The rest of the list is taken by oscillators, whose sinusoidal marginal has kurtosis near −1.5.</li>
+    <li><b>Predictability</b> ranks the regime in the middle. Its directions sit at singular values around 0.85 of the predictor A (ranks 47–50 of 124). The top 32 singular directions hold only 3% of the regime subspace.</li>
+    <li><b>Predictor residuals.</b> These carry some regime signal: switch-detection AUC 0.83 on the top residual-ICA directions, and HMM 0.79. Their most non-Gaussian directions are still non-regime.</li>
+  </ul>
+
+  <h2>Theory check (1-D and 12-D simulation)</h2>
+  <p><span class="m">contrast_sim.py</span> builds a process <span class="m">Y = B|G|</span>, with B a sticky ±1 chain and G Gaussian. Its marginal is exactly N(0, 1), and it has the same autocovariance as a Gaussian twin process.</p>
+  <ul>
+    <li>Contrast kurtosis peaks at 3.25 (m ≈ 11) for Y and stays within ±0.02 for the twin.</li>
+    <li>A closed form for the contrast kurtosis matches simulation to within 0.04.</li>
+    <li>In a 12-D mixture (3 regimes in a Gaussianised plane, 9 Gaussian AR factors, 1 state-dependent diffusion), the whitened-contrast fourth-cumulant subspace recovers the regime plane to within about 1.3° for m ≥ 8. Window-mean k-means in that plane scores 0.992, against 0.344 in the full space.</li>
+  </ul>
+
+  <h2>When it applies</h2>
+  <ul>
+    <li><b>The encoder must have learnt the regime as a linear feature.</b> That required training with a temporal gap between context and target windows. Without the gap, the encoders copied features across the window boundary and dropped the regime: probe about 0.26 for every adjacent-window run, and 0.63 after 100k steps.</li>
+    <li><b>The regime must persist over several windows</b> and switch abruptly. The contrast window m should be well below the mean dwell time.</li>
+    <li><b>The method needs ordered sequences,</b> not shuffled windows. It uses only the latent and time order, never the observations or labels.</li>
+  </ul>
+
+  <h2>Validation and baselines (8 Oct)</h2>
+  <p>The rule was applied unchanged (m = 1, top 3 after de-duplication) to the other checkpoints and to non-JEPA representations. All were reduced to 124 dimensions where needed, using the same 16 test series. The plain GMM/HMM columns use the top 32 PCA components with no contrasts and no ICA.</p>
+  <div class="scroll"><table>
+    <thead><tr><th>Representation</th><th>Linear probe</th><th>Top-3 regime share</th><th>Readout HMM</th><th>Plain GMM-full</th><th>Plain HMM</th></tr></thead>
+    <tbody>
+      <tr class="hi"><td>JEPA step 10k</td><td class="n">0.985</td><td class="n">0.99 / 0.99 / 0.97</td><td class="n">0.991</td><td class="n">—</td><td class="n">—</td></tr>
+      <tr class="hi"><td>JEPA step 20k</td><td class="n">0.988</td><td class="n">0.99 / 0.99 / 0.98</td><td class="n">0.993</td><td class="n">—</td><td class="n">—</td></tr>
+      <tr class="hi"><td>JEPA step 50k</td><td class="n">0.995</td><td class="n">0.99 / 0.99 / 0.99</td><td class="n">0.998</td><td class="n">—</td><td class="n">—</td></tr>
+      <tr class="hi"><td>JEPA step 55k</td><td class="n">0.995</td><td class="n">0.99 / 0.99 / 0.99</td><td class="n">0.998</td><td class="n">0.271</td><td class="n">0.276</td></tr>
+      <tr><td>Random-init encoder</td><td class="n">0.504</td><td class="n">0.01 / 0.00 / 0.01</td><td class="n">0.270</td><td class="n">0.264</td><td class="n">0.265</td></tr>
+      <tr><td>Raw channel stats (mean, log sd, lag-1 ac)</td><td class="n">0.264</td><td class="n">—</td><td class="n">0.250</td><td class="n">0.253</td><td class="n">0.253</td></tr>
+      <tr><td>Raw log spectra</td><td class="n">0.589</td><td class="n">0.99 / 0.00 / 0.01</td><td class="n">0.467</td><td class="n">0.254</td><td class="n">0.258</td></tr>
+      <tr><td>Flattened raw windows (PCA)</td><td class="n">0.268</td><td class="n">0.13 / 0.03 / 0.08</td><td class="n">0.257</td><td class="n">1.000</td><td class="n">1.000</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li><b>The readout is stable.</b> It recovers the regime at every JEPA checkpoint, and the excess gap after the third component appears every time. It fails, as it should, where the regime is not a linear feature.</li>
+    <li><b>On this dataset a cheap baseline already works.</b> A full-covariance GMM on 32 PCA components of the raw windows gets 1.000; the diagonal version gets 0.45. The regimes differ in oscillation frequency, which shows up as different within-window covariance. The JEPA converts that covariance difference into a mean shift, which is why the latent needs this readout and a plain GMM on it fails.</li>
+    <li><b>So on this dataset the JEPA matches the best baseline but does not beat it.</b> Whether it adds value has to be tested where a single window carries no regime signal, as in the cross-window dataset.</li>
+  </ul>
+
+  <h2>Open caveats</h2>
+  <div class="caveat">
+    <p><b>The scoring rule was chosen after seeing the step-55k component table.</b> It has since held unchanged at steps 10k, 20k and 50k, but only on one dataset and one training seed.</p>
+    <p><b>Possible confound.</b> A continuous factor whose speed depends on its state can be Gaussian in the marginal yet heavy-tailed in its increments. In the 12-D simulation the diffusion had contrast kurtosis 4.5 at m = 1, which would pass this filter. The two separate by how kurtosis changes with m: the diffusion's falls steadily as m grows, while a regime's peaks near m* ≈ dwell / 3. Here dwell is 10, so both peak at small m and the profile test is weak.</p>
+    <p><b>K was given</b> to the GMM/HMM. The excess gap separately suggests K − 1 = 3 directions.</p>
+  </div>
+
+  <h2>Next checks</h2>
+  <ol>
+    <li>Retrain on the cross-window dataset (regimes invisible within one window) with a gap and fresh data per batch, then apply this readout against the raw-window GMM and AR-HMM baselines. This is the test of whether the JEPA adds value.</li>
+    <li>Test a slower-switching dataset (dwell of 50 or more windows) together with a state-dependent diffusion nuisance, to stress the confound.</li>
+    <li>Turn the statistic into a training signal, for example a penalty that rewards temporal excess in a small block of the latent.</li>
+  </ol>
+
+  <h2>Files</h2>
+  <p>In <span class="m">~/Documents/JEPA-LINEAR/regime_readout/</span>:</p>
+  <ul>
+    <li><span class="m">contrast_rank2.py</span>: the method and the results table (output in <span class="m">contrast_rank2.out</span>).</li>
+    <li><span class="m">contrast_sim.py</span>: the 1-D and 12-D simulation.</li>
+    <li><span class="m">residual_test.py</span>: the predictor-residual comparison.</li>
+    <li><span class="m">enc_compare.py</span>: the context-vs-target encoder comparison.</li>
+    <li><span class="m">gap1_latest_Z.npz</span>: the encoded test latents.</li>
+  </ul>
+  <p>The checkpoint is <span class="m">long_runs/separate_lam0.5_lr0.0003_fresh_gap1_scratch_ckpt.pt</span> (step 55k). The scripts run from the project folder.</p>
+</main>

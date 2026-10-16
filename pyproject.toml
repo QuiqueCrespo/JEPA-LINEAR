@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cpbench"
+version = "0.1.0"
+description = "Synthetic benchmark for latent change-point detection and regime clustering (datasets, feature learners, detectors)"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "pandas", "scikit-learn", "torch", "omegaconf", "matplotlib"]
+
+[tool.setuptools.packages.find]
+include = ["cpbench*"]
+
+[tool.setuptools.package-data]
+cpbench = ["configs/*.yaml"]

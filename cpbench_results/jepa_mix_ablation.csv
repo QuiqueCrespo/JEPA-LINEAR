@@ -1,0 +1,7 @@
+dataset,learner,best_unsup,best_detector,decode_regime_features,decode_regime_logits,decode_regime_state,sens_dynamics,decode_sensor_features,sens_sensor
+fixed sensor,raw_lagcov (window 16),0.5102681559636761,gmm,,,,,,
+fixed sensor,raw_flat (window 16),0.6351059851301374,temporal_excess,,,,,,
+fixed sensor,jepa_mix state_window=1,0.5273146971294977,hmm,0.6935,0.77,0.48175,1.0160508596676492,,
+fixed sensor,jepa_mix state_window=4,0.5649779057197499,arhmm,0.731,0.6575,0.4845,1.0472292722983951,,
+switching sensor,jepa_mix state_window=4,0.5875319019521646,hmm,0.65175,0.63525,0.49725,1.0206915594003616,0.81675,0.9792160753552525
+switching sensor,jepa_mix state_window=1,0.5488481422208783,arhmm,0.60625,0.617,0.4865,0.989886923262893,0.899,1.1931937268749464

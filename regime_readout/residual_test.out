@@ -1,0 +1,50 @@
+step 55000, 16 series x 2000 windows, d=124, lag h=2
+
+1. SAME-TIME (Z_t, Y_t)
+   canonical correlations: >0.9: 31  0.5-0.9: 60  <0.5: 33   (min 0.000)
+   regime probe on agreeing  (top 31)     canonical dims: 0.996
+   regime probe on middle    (32-93)      canonical dims: 0.219
+   regime probe on disagreeing (last 31)  canonical dims: 0.244
+
+2. LAGGED PAIR (Z_t, Y_t+2) in SVD(A) coordinates; regime switches in 18.6% of pairs
+   sigma_i: top [1.61 1.59 1.48 1.43], #>0.5 83;  corr(c_i,u_i): top [0.96 0.96 0.93 0.92]
+   residual excess kurtosis: real max 3.73, #>surrogate max (0.08): 94
+   top 8 singular directions by residual kurtosis:
+    sigma   corr  resid_kurt  ctx_marg_kurt  share_ctx  share_tgt
+87  0.449  0.555       3.727          2.557      0.007      0.004
+85  0.466  0.551       3.609          1.918      0.000      0.000
+88  0.420  0.547       3.408          1.672      0.002      0.001
+86  0.455  0.549       3.296          1.678      0.001      0.000
+83  0.487  0.563       2.765          1.290      0.002      0.000
+84  0.480  0.568       2.728          1.331      0.001      0.001
+49  0.853  0.736       2.651         -0.245      0.546      0.569
+80  0.600  0.641       2.638          3.301      0.001      0.001
+   singular directions with >30% in the regime subspace (labels):
+    sigma   corr  resid_kurt  ctx_marg_kurt  share_ctx  share_tgt
+47  0.867  0.750       1.519          0.209      0.390      0.408
+49  0.853  0.736       2.651         -0.245      0.546      0.569
+50  0.846  0.740       1.636         -0.313      0.493      0.493
+   (labels) regime-subspace share captured by top-k singular directions of A: k=8: ctx 0.00 tgt 0.01  k=16: ctx 0.01 tgt 0.01  k=32: ctx 0.03 tgt 0.04  k=64: ctx 0.95 tgt 0.98
+
+   residual ICA, top 8 by excess (residual kurtosis − |marginal kurtosis of Y along it|):
+   resid_kurt  y_marg_kurt  excess  share_tgt
+0       5.634        2.254   3.379      0.028
+1       7.563        5.361   2.201      0.021
+2       8.764        6.901   1.863      0.025
+3       4.666        3.215   1.450      0.000
+4       1.839        0.835   1.004      0.000
+5       1.112        0.135   0.977      0.000
+6       5.674        4.981   0.693      0.011
+7       9.351        8.817   0.534      0.000
+   Y projected on top-3 residual-ICA directions         GMM 0.622  HMM 0.793
+   Y on top-3 singular directions by residual kurtosis  GMM 0.469  HMM 0.560
+
+   change-point detection, AUC for 'regime switched between t and t+2' (labels used only to score):
+     ||whitened residual||² (all 124)                     0.613
+     residual² on top-3 residual-ICA dirs                 0.833
+     residual² on top-3 kurtosis singular dirs            0.631
+     baseline ||Z_t+2 − Z_t||² (whitened, no predictor)   0.547
+
+   confound check: of the top-20 residual-ICA components by excess, 20 have <10% regime share; their residual kurtosis [5.6 7.6 8.8 4.7 1.8 1.1] vs regime ones []
+
+[exited with code 0]

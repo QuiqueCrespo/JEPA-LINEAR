@@ -1,0 +1,21 @@
+# generated data, runs and caches (large; reproducible from the code)
+cpbench_runs*/
+cpbench_cache/
+cpbench_audit/
+long_runs/
+large_scale_runs/
+crosswindow_runs/
+latents/
+sweeps/
+*.npz
+*.npy
+*.pt
+*.pkl
+*.log
+*.bak
+*.bak2
+*.pdf
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store

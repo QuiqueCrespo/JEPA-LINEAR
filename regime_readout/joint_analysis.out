@@ -1,0 +1,28 @@
+
+================ SAME TIME (Z_t, Y_t) ================
+  joint ICA (248 comps): kurtosis min 0.63 max 44.35; most negative 6: [0.63 0.66 0.71 0.78 0.79 0.81]
+     their R² from Z alone [0.46 0.53 0.58 0.54 0.39 0.6 ]  from Y alone [0.42 0.28 0.17 0.25 0.25 0.2 ]
+     comps that are 'cross' (R² < 0.5 from Z alone AND from Y alone): 96; their kurtosis range 0.63 .. 22.18
+  (labels) probe: Z 0.995  Y 0.996  cross components only 0.479
+     unsupervised on 3 most negative-kurtosis joint comps   GMM 0.287  HMM 0.289   probe 0.297
+     unsupervised on 6 most negative                        GMM 0.284  HMM 0.283   probe 0.309
+     unsupervised on 3 most positive                        GMM 0.250  HMM 0.261   probe 0.267
+  canonical correlations top [0.989 0.986 0.985], median 0.827
+  pair products: probe (labels) all 0.866; top-32 pairs 0.853
+  pair differences c_i − u_i: kurtosis range 0.12..3.14; probe 0.307
+     unsupervised on 3 most negative-kurtosis product ICs   GMM 0.505  HMM 0.556   probe 0.575  (kurt [2.09 2.44 3.28])
+     unsupervised on 3 most positive                        GMM 0.254  HMM 0.258   probe 0.254  (kurt [84.82 89.46 96.65])
+
+================ LAGGED (Z_t, Y_t+2) ================
+  joint ICA (248 comps): kurtosis min 0.32 max 36.17; most negative 6: [0.32 0.51 0.66 0.7  0.79 0.84]
+     their R² from Z alone [0.47 0.54 0.5  0.46 0.74 0.76]  from Y alone [0.39 0.35 0.42 0.36 0.15 0.19]
+     comps that are 'cross' (R² < 0.5 from Z alone AND from Y alone): 72; their kurtosis range 0.32 .. 15.37
+  (labels) probe: Z 0.995  Y 0.803  cross components only 0.443
+     unsupervised on 3 most negative-kurtosis joint comps   GMM 0.276  HMM 0.286   probe 0.264
+     unsupervised on 6 most negative                        GMM 0.266  HMM 0.287   probe 0.287
+     unsupervised on 3 most positive                        GMM 0.252  HMM 0.255   probe 0.256
+  canonical correlations top [0.963 0.96  0.936], median 0.721
+  pair products: probe (labels) all 0.481; top-32 pairs 0.248
+  pair differences c_i − u_i: kurtosis range 0.15..2.96; probe 0.492
+     unsupervised on 3 most negative-kurtosis product ICs   GMM 0.257  HMM 0.263   probe 0.257  (kurt [0.73 3.34 3.73])
+     unsupervised on 3 most positive                        GMM 0.249  HMM 0.258   probe 0.249  (kurt [60.26 73.92 99.77])

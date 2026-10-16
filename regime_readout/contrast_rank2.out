@@ -1,0 +1,56 @@
+contrast ICA m=1 done, 165 iters
+contrast ICA m=2 done, 116 iters
+scoring component 0/251  0s
+scoring component 100/251  7s
+scoring component 200/251  13s
+oracle regime directions (labels used only to define them):
+                origin  share  marg_kurt     ck1    ck2    ck4    ck8  minfrac     CK  autonomy
+248  ORACLE regime dir    1.0      0.280  15.478  8.957  4.182  1.845    0.124  0.125     2.186
+249  ORACLE regime dir    1.0     -0.381  14.916  8.323  3.649  1.397    0.212  0.062     1.421
+250  ORACLE regime dir    1.0     -0.368  15.127  8.504  3.756  1.444    0.204  0.063     1.469
+
+248 candidates; how many have >50% of their direction in the regime subspace: 6
+
+candidates with share > 0.5 (diagnostic):
+       origin  share  marg_kurt     ck1    ck2    ck4    ck8  minfrac     CK  autonomy
+40   cICA m=1  0.988      0.184  15.446  8.784  4.000  1.741    0.214  0.031     1.155
+63   cICA m=1  0.994     -0.091  15.980  8.739  3.866  1.580    0.227  0.020     1.137
+106  cICA m=1  0.991      0.222  16.161  9.221  4.207  1.716    0.212  0.046     1.153
+164  cICA m=2  0.978      0.305  14.640  8.779  4.076  1.797    0.213  0.041     1.289
+187  cICA m=2  0.988     -0.046  15.018  8.628  3.845  1.580    0.224  0.024     1.169
+230  cICA m=2  0.986      0.286  15.551  9.263  4.269  1.758    0.211  0.046     1.143
+
+top 8 by contrast kurtosis at m=2 (the old criterion):
+       origin  share  marg_kurt     ck1     ck2     ck4     ck8  minfrac     CK  autonomy
+147  cICA m=2  0.001     33.957  18.090  20.811  21.059  19.543    0.023  0.085     1.504
+173  cICA m=2  0.000     30.880  16.217  20.255  25.193  22.433    0.028  0.094     1.493
+73   cICA m=1  0.001     28.284  17.978  19.666  20.409  18.162    0.031  0.090     1.410
+49   cICA m=1  0.001     32.134  20.140  19.656  19.056  18.504    0.027  0.065     1.397
+131  cICA m=2  0.001     34.643  18.273  19.319  17.796  20.182    0.013  0.115     2.169
+186  cICA m=2  0.001     30.995  15.756  18.933  20.013  20.706    0.025  0.142     1.393
+158  cICA m=2  0.000     30.022  14.898  18.121  19.524  18.764    0.029  0.145     1.465
+7    cICA m=1  0.001     32.652  17.750  17.715  16.075  17.507    0.014  0.092     1.903
+top 10 by temporal excess (contrast kurtosis m=1 minus |marginal kurtosis|):
+       origin  share  marg_kurt     ck1    ck2    ck4    ck8  minfrac     CK  autonomy  excess
+106  cICA m=1  0.991      0.222  16.161  9.221  4.207  1.716    0.212  0.046     1.153  15.940
+63   cICA m=1  0.994     -0.091  15.980  8.739  3.866  1.580    0.227  0.020     1.137  15.890
+230  cICA m=2  0.986      0.286  15.551  9.263  4.269  1.758    0.211  0.046     1.143  15.265
+40   cICA m=1  0.988      0.184  15.446  8.784  4.000  1.741    0.214  0.031     1.155  15.261
+187  cICA m=2  0.988     -0.046  15.018  8.628  3.845  1.580    0.224  0.024     1.169  14.972
+164  cICA m=2  0.978      0.305  14.640  8.779  4.076  1.797    0.213  0.041     1.289  14.335
+109  cICA m=1  0.001      3.752   6.707  2.363  1.128  0.566    0.236  0.046     0.992   2.955
+45   cICA m=1  0.001      3.019   5.934  1.727  0.771  0.375    0.252  0.038     0.981   2.915
+32   cICA m=1  0.000      4.243   6.911  2.898  1.544  0.547    0.242  0.052     0.986   2.668
+123  cICA m=1  0.001      4.616   7.167  3.321  1.702  0.828    0.216  0.062     0.999   2.551
+
+label recovery (K = 4, chance 0.25)
+  temporal-excess rule, top 2 (de-duplicated)  dims  2  mean share 0.99  GMM 0.962  HMM 0.974
+  temporal-excess rule, top 3 (de-duplicated)  dims  3  mean share 0.99  GMM 0.996  HMM 0.998
+  temporal-excess rule, top 4 (de-duplicated)  dims  4  mean share 0.74  GMM 0.996  HMM 0.998
+  temporal-excess rule, top 6 (de-duplicated)  dims  6  mean share 0.50  GMM 0.996  HMM 0.998
+  ORACLE regime subspace                       dims  3  mean share 1.00  GMM 0.996  HMM 0.998
+
+phase-surrogate null: max temporal excess 1.02; distinct real components above it: 29
+  all components above the surrogate null      dims 29  mean share 0.10  GMM 0.994  HMM 0.996
+
+[exited with code 0]

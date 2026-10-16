@@ -1,0 +1,61 @@
+contrast ICA m=1 done, 165 iters
+contrast ICA m=2 done, 116 iters
+contrast ICA m=4 done, 148 iters
+scoring component 0/499  0s
+scoring component 100/499  18s
+scoring component 200/499  36s
+scoring component 300/499  48s
+scoring component 400/499  55s
+oracle regime directions (labels used only to define them):
+                origin  share  marg_kurt     ck1    ck2    ck4    ck8  minfrac     CK  autonomy
+496  ORACLE regime dir    1.0      0.280  15.478  8.957  4.182  1.845    0.124  0.125     2.186
+497  ORACLE regime dir    1.0     -0.381  14.916  8.323  3.649  1.397    0.212  0.062     1.421
+498  ORACLE regime dir    1.0     -0.368  15.127  8.504  3.756  1.444    0.204  0.063     1.469
+
+496 candidates; how many have >50% of their direction in the regime subspace: 9
+
+candidates with share > 0.5 (diagnostic):
+       origin  share  marg_kurt     ck1    ck2    ck4    ck8  minfrac     CK  autonomy
+40   cICA m=1  0.988      0.184  15.446  8.784  4.000  1.741    0.214  0.031     1.155
+63   cICA m=1  0.994     -0.091  15.980  8.739  3.866  1.580    0.227  0.020     1.137
+106  cICA m=1  0.991      0.222  16.161  9.221  4.207  1.716    0.212  0.046     1.153
+164  cICA m=2  0.978      0.305  14.640  8.779  4.076  1.797    0.213  0.041     1.289
+187  cICA m=2  0.988     -0.046  15.018  8.628  3.845  1.580    0.224  0.024     1.169
+230  cICA m=2  0.986      0.286  15.551  9.263  4.269  1.758    0.211  0.046     1.143
+288  cICA m=4  0.937      0.137   9.479  7.235  3.598  1.578    0.221  0.043     1.372
+313  cICA m=4  0.863      1.378   6.553  6.973  3.988  1.920    0.187  0.064     1.560
+334  cICA m=4  0.881      0.738   6.697  6.491  4.011  1.722    0.203  0.062     1.390
+
+top 8 by contrast kurtosis at m=2 (the old criterion):
+       origin  share  marg_kurt     ck1     ck2     ck4     ck8  minfrac     CK  autonomy
+147  cICA m=2  0.001     33.957  18.090  20.811  21.059  19.543    0.023  0.085     1.504
+173  cICA m=2  0.000     30.880  16.217  20.255  25.193  22.433    0.028  0.094     1.493
+73   cICA m=1  0.001     28.284  17.978  19.666  20.409  18.162    0.031  0.090     1.410
+49   cICA m=1  0.001     32.134  20.140  19.656  19.056  18.504    0.027  0.065     1.397
+131  cICA m=2  0.001     34.643  18.273  19.319  17.796  20.182    0.013  0.115     2.169
+186  cICA m=2  0.001     30.995  15.756  18.933  20.013  20.706    0.025  0.142     1.393
+297  cICA m=4  0.000     28.228  10.562  18.584  27.062  23.189    0.027  0.107     1.463
+158  cICA m=2  0.000     30.022  14.898  18.121  19.524  18.764    0.029  0.145     1.465
+
+passing filters (contrast kurt m=2 > 1, every level > 10% occupancy): 128
+       origin  share  marg_kurt     ck1    ck2    ck4    ck8  minfrac     CK  autonomy   rank
+165  cICA m=2  0.001      3.593   4.530  4.094  2.638  1.541    0.186  0.039     0.951   66.0
+2    cICA m=1  0.000      3.089   3.660  3.562  2.629  1.289    0.209  0.038     0.953   67.0
+281  cICA m=4  0.002      4.441   5.380  3.176  2.453  0.896    0.200  0.034     0.963   79.0
+209  cICA m=2  0.002      3.807   5.076  2.820  1.846  0.641    0.229  0.034     0.958   83.0
+211  cICA m=2  0.001      2.385   2.487  2.580  1.979  0.817    0.203  0.034     0.947   93.0
+217  cICA m=2  0.000      5.923   7.078  4.809  2.959  1.454    0.200  0.037     0.991   95.0
+296  cICA m=4  0.013      2.938   2.378  2.384  1.992  1.123    0.164  0.029     0.952   96.0
+75   cICA m=1  0.002      3.341   4.800  3.290  2.219  0.854    0.182  0.038     0.981  102.0
+126  cICA m=2  0.001      3.499   3.253  4.127  3.313  1.617    0.147  0.036     0.994  103.0
+100  cICA m=1  0.001      4.497   5.533  3.213  1.708  0.822    0.177  0.043     0.961  106.0
+300  cICA m=4  0.002      1.665   1.884  2.458  2.460  1.273    0.179  0.038     0.956  118.0
+63   cICA m=1  0.994     -0.091  15.980  8.739  3.866  1.580    0.227  0.020     1.137  118.0
+
+label recovery (K = 4, chance 0.25)
+  combined rule, top 3                       dims  3  mean share 0.00  GMM 0.454  HMM 0.582
+  combined rule, top 4                       dims  4  mean share 0.00  GMM 0.493  HMM 0.617
+  combined rule, top 6                       dims  6  mean share 0.00  GMM 0.546  HMM 0.636
+  combined rule, top 9                       dims  9  mean share 0.00  GMM 0.592  HMM 0.674
+  contrast kurtosis only, top 3              dims  3  mean share 0.00  GMM 0.253  HMM 0.261
+  ORACLE regime subspace                     dims  3  mean share 1.00  GMM 0.996  HMM 0.998

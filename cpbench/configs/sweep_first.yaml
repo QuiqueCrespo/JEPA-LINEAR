@@ -1,0 +1,24 @@
+# First benchmark sweep (proposed): the synthetic grid x feature learners x window/gap, every detector on top.
+name: first_sweep
+out: cpbench_runs
+datasets: cpbench/configs/grid_synthetic.yaml   # or an inline grid of component slots
+learners: [jepa_shared, jepa_separate, jepa_separate_full, jepa_mlp_shared, jepa_mlp_separate, ae, vae, bvae4, cpc, ts2vec]
+seeds: [0, 1, 2]
+hparams:                    # model hyperparameters, in samples (the data have no window grid)
+  hp.window: [16, 32, 64]
+  hp.gap: [0, 32]
+overrides: [hp.steps=20000]
+baselines: [raw_flat, raw_mean, raw_stats, raw_spectra, raw_cov, raw_lagcov, raw_coskew, raw_bispec]   # fixed features
+detectors: [gmm, hmm, arhmm, temporal_excess, contrast, mmd, bocpd]                                  # on every learner
+baseline_hparams: {hp.window: [16, 32, 64]}
+plugins: []                 # e.g. [my_plugins] : modules that register custom feature learners / detectors
+slurm:
+  partition: gpu            # edit for your cluster
+  gres: "gpu:1"
+  time: "06:00:00"
+  cpus: 8
+  mem: 32G
+  max_parallel: 40
+  workers: 6
+  setup: "source ~/.bashrc; conda activate changepoint-jepa"   # edit
+  cache: cpbench_cache

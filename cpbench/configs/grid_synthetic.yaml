@@ -1,0 +1,77 @@
+# The synthetic benchmark grid: every combination of the slots below is one dataset, identified by its construction.
+# Expand with cpbench.data.expand("cpbench/configs/grid_synthetic.yaml").  All timescales in samples.
+#
+# Sources are switching LINEAR signals whose parameters may depend on the regime; nonlinearities are transforms.
+# Each signal below changes one aspect of the data and keeps the others matched across regimes; they are ordered by
+# the cheapest statistic of a single window that can see the regime.  Parameter values written as
+# {base: b, spread: s} give K values spread over [b - s, b + s], permuted independently per channel.
+
+regime:
+  - {type: markov, K: 4, dwell: 320}
+
+signal:
+  # first moment
+  - {type: composite, combine: sum, sources: [{type: level, d: 4, mu: {base: 0, spread: 0.5}}, {type: ar, d: 4, phi: 0.8}]}
+  - {type: composite, combine: sum, sources: [{type: trend, d: 4, drift: {base: 0, spread: 0.02}, kappa: 0.00025}, {type: ar, d: 4, phi: 0.8}]}
+  # per-channel second order
+  - {type: ar, d: 4, phi: 0.8, sigma: {base: 1.1, spread: 0.55}}
+  - {type: composite, combine: sum, sources: [{type: level, d: 4, mu: {base: 0, spread: 0.5}}, {type: ar, d: 4, phi: 0.8, sigma: {base: 1.1, spread: 0.55}}]}
+  - {type: ar, d: 4, phi: {base: 0.4, spread: 0.5}}                                    # autocorrelation (variance kept at 1)
+  - {type: oscillator, d: 6, freq: {base: 0.15, spread: 0.03}, damp: 0.97}             # spectral (frequency)
+  # cross-channel second order
+  - {type: composite, sources: [{type: ar, d: 4, phi: 0.8}], transforms: [{type: linear, weights: {random: true, strength: 1.0}}]}
+  - {type: composite, sources: [{type: ar, d: 2, phi: 0.95}],                          # lead-lag: which copy leads
+     transforms: [{type: linear, weights: [[1, 0], [1, 0], [0, 1], [0, 1]]},
+                  {type: delay, lags: [[0, 4, 0, 4], [4, 0, 0, 4], [0, 4, 4, 0], [4, 0, 4, 0]]},
+                  {type: noise, sigma: 0.3}]}
+  # higher order only
+  - {type: composite, sources: [{type: ar, d: 4, phi: 0.5}],
+     transforms: [{type: pointwise, fn: skew, strength: 0.5, mirror: [[0, 0, 0, 0], [1, 1, 0, 0], [0, 0, 1, 1], [1, 1, 1, 1]]}]}
+  - {type: phase}                                                                      # cross-frequency phase coupling
+  # nothing in a single window: the regime acts on transitions of a hidden state
+  - {type: transition}
+
+nuisance:                                  # regime-independent channels
+  - []
+  - &nuisance
+    - {type: ar, d: 3, phi: 0.99896, scale: 0.8}                                         # slow factors (~960 samples)
+    - {type: oscillator, d: 2, freq: {channels: [0.03, 0.31]}, damp: 0.995, quadrature: true, scale: 0.8}
+    - {type: white, d: 4, scale: 0.8}
+    - {type: impulses, d: 1, rate: 0.02, scale: 0.8}
+
+corruption:                                # transform chains (standardisation is always appended)
+  - []                                                           # clean
+  - [{type: project, D: 64}, {type: noise, sigma: 0.5}]          # up-projection + noise
+  - &sensor                                                      # + sensor effects
+    - {type: project, D: 64}
+    - {type: gain_drift, scale: 0.25, timescale: 1600}
+    - {type: lowpass, max_alpha: 0.6}
+    - {type: volatility, scale: 0.3, timescale: 640}
+    - {type: noise, sigma: 0.5}
+    - {type: outliers, rate: 0.01}
+    - {type: dropout, rate: 0.05, block: 32}
+  - - {type: project, D: 64}                                     # + nonlinear invertible mixing and saturation
+    - {type: couplings, n: 4, strength: 1.0}
+    - {type: saturate, level: 3.0}
+    - {type: gain_drift, scale: 0.25, timescale: 1600}
+    - {type: lowpass, max_alpha: 0.6}
+    - {type: volatility, scale: 0.3, timescale: 640}
+    - {type: noise, sigma: 0.5}
+    - {type: outliers, rate: 0.01}
+    - {type: dropout, rate: 0.05, block: 32}
+  - - {type: time_warp, strength: 0.3, timescale: 128}            # + time warping, coloured noise, wander
+    - {type: project, D: 64}
+    - {type: couplings, n: 4, strength: 1.0}
+    - {type: saturate, level: 3.0}
+    - {type: gain_drift, scale: 0.25, timescale: 1600}
+    - {type: lowpass, max_alpha: 0.6}
+    - {type: volatility, scale: 0.3, timescale: 640}
+    - {type: noise, sigma: 0.5}
+    - {type: noise, sigma: 0.3, timescale: 1.6}
+    - {type: wander, scale: 0.5, timescale: 6400}
+    - {type: outliers, rate: 0.01}
+    - {type: dropout, rate: 0.05, block: 32}
+
+seed: 0
+margin: 32
+splits: {test: [16, 64000], val: [4, 64000]}

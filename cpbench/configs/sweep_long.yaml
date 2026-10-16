@@ -1,0 +1,54 @@
+# Long training in idealised conditions: fresh series every step (no sample is ever seen twice), 200k steps with
+# cosine decay, and a supervised + unsupervised evaluation on the validation split every 5k steps (logged to each
+# run's log.jsonl; see monitor_training.ipynb).  Weights are kept at log-spaced steps for later test evaluation.
+#   python -m cpbench.hpc.make_sweep cpbench/configs/sweep_long.yaml && sbatch sweeps/long/job.sbatch
+#   python -m cpbench.hpc.status sweeps/long
+# Jobs requeue themselves at the time limit and resume from their checkpoint.
+name: long
+out: cpbench_runs_long
+datasets:
+  # 1. rotation direction of a 2-D state, 64 random Fourier channels, fixed sensor (the idealised case)
+  - regime: {type: markov, K: 2, dwell: 200}
+    sources: [{type: oscillator, d: 1, quadrature: true, freq: [0.01909859317102744, -0.01909859317102744], damp: 0.98}]
+    transforms: [{type: render, D: 64, kind: fourier}, {type: noise, sigma: 0.5}]
+    seed: 0
+    splits: {test: [8, 16000], val: [4, 8000]}
+  # 2. the same with an independent sensor process (gain, bias, noise level)
+  - regimes: {main: {type: markov, K: 2, dwell: 200}, sensor: {type: markov, K: 2, dwell: 600}}
+    target: main
+    sources: [{type: oscillator, d: 1, quadrature: true, freq: [0.01909859317102744, -0.01909859317102744], damp: 0.98}]
+    transforms: [{type: render, D: 64, kind: fourier},
+                 {type: affine, gain: {base: 1.0, spread: 0.3}, bias: {base: 0.0, spread: 0.2}, regime: sensor},
+                 {type: noise, sigma: [0.5, 1.5], regime: sensor}]
+    seed: 0
+    splits: {test: [8, 16000], val: [4, 8000]}
+  # 3. time-reversal regimes (equal statistics up to third order), 8 channels (experiment_reversal.ipynb)
+  - regime: {type: markov, K: 4, dwell: 640}
+    sources: [{type: reversal, d: 2, freq: [0.031, 0.047], b: 0.5, diff: 0.002}]
+    transforms: [{type: project, D: 8}, {type: noise, sigma: 0.5}]
+    seed: 0
+    splits: {test: [8, 32000], val: [4, 16000]}
+learners: [jepa_shared, jepa_separate, jepa_separate_full, jepa_mlp_shared, jepa_mlp_separate, jepa_mix,
+           cpc, ts2vec, ts2vec_lite, ae, vae, bvae4, ae_pred, vae_pred]
+seeds: [0, 1, 2]
+hparams:
+  hp.window: [64]
+  hp.gap: [32]
+overrides: [hp.steps=200000, hp.batch=256, hp.warmup=2000, hp.schedule=cosine, hp.min_lr=0.01,
+            hp.eval_every=5000, hp.ckpt_every=5000, "hp.eval_detectors=[gmm,hmm,arhmm,temporal_excess]", hp.eval_probes=all,
+            "hp.keep_ckpts=[1000,3000,10000,30000,100000,200000]"]
+baselines: [raw_flat, raw_stats, raw_spectra, raw_cov, raw_lagcov, raw_coskew, raw_bispec, raw_asym]
+baseline_hparams: {hp.window: [64]}
+detectors: [gmm, hmm, arhmm, temporal_excess, contrast, mmd, bocpd, dmd_error, cpdmd]
+plugins: []
+slurm:
+  partition: gpu            # edit for your cluster
+  gres: "gpu:1"
+  time: "24:00:00"          # jobs requeue themselves if they need longer
+  signal_lead: 900          # seconds before the limit to checkpoint
+  cpus: 8
+  mem: 32G
+  max_parallel: 40
+  workers: 6                # data-generation workers per job (fresh data every step)
+  setup: "source ~/.bashrc; conda activate changepoint-jepa"   # edit
+  cache: cpbench_cache

@@ -1,0 +1,41 @@
+# Dimension sweep for experiment_highdim.ipynb: a 2-D rotating state (rotation direction = regime) rendered into
+# D in {8, 64, 256, 1024} channels by random Fourier features, with an independent sensor regime (gain, bias, noise).
+#   python -m cpbench.hpc.make_sweep cpbench/configs/sweep_highdim.yaml && sbatch sweeps/highdim/job.sbatch
+# Then run experiment_highdim.ipynb with CPBENCH_D=<D> for each D: it finds the trained models in `out` (same run
+# directories) and only adds the sensitivity / decodability scores.  Keep window, gap and training settings equal to
+# the notebook's (hp.window=32, hp.gap=32, steps=3000, batch=128) or the notebook will train its own models.
+name: highdim
+out: cpbench_runs_highdim
+datasets:
+  regime:
+    - {main: {type: markov, K: 2, dwell: 200}, sensor: {type: markov, K: 2, dwell: 600}}
+  target: main
+  signal:
+    - {type: oscillator, d: 1, quadrature: true, freq: [0.01909859317102744, -0.01909859317102744], damp: 0.98}
+  corruption:
+    - [{type: render, D: 8, kind: fourier}, {type: affine, gain: {base: 1.0, spread: 0.3}, bias: {base: 0.0, spread: 0.2}, regime: sensor}, {type: noise, sigma: [0.5, 1.5], regime: sensor}]
+    - [{type: render, D: 64, kind: fourier}, {type: affine, gain: {base: 1.0, spread: 0.3}, bias: {base: 0.0, spread: 0.2}, regime: sensor}, {type: noise, sigma: [0.5, 1.5], regime: sensor}]
+    - [{type: render, D: 256, kind: fourier}, {type: affine, gain: {base: 1.0, spread: 0.3}, bias: {base: 0.0, spread: 0.2}, regime: sensor}, {type: noise, sigma: [0.5, 1.5], regime: sensor}]
+    - [{type: render, D: 1024, kind: fourier}, {type: affine, gain: {base: 1.0, spread: 0.3}, bias: {base: 0.0, spread: 0.2}, regime: sensor}, {type: noise, sigma: [0.5, 1.5], regime: sensor}]
+  seed: 0
+  splits: {test: [8, 16000], val: [4, 8000]}
+learners: [jepa_mix, jepa_shared, jepa_separate, jepa_separate_full, jepa_mlp_shared, jepa_mlp_separate, ae, vae, bvae4, ae_pred, vae_pred, cpc, ts2vec, ts2vec_lite]
+seeds: [0, 1, 2]
+hparams:
+  hp.window: [32]
+  hp.gap: [32]
+overrides: [hp.steps=3000, hp.batch=128, hp.warmup=1000, hp.eval_every=750]
+baselines: [raw_flat, raw_mean, raw_stats, raw_spectra]        # D^2 raw features (cov, lagcov, coskew, bispec) run in the notebook for D <= 128
+baseline_hparams: {hp.window: [32]}
+detectors: [gmm, hmm, arhmm, temporal_excess, contrast, mmd, bocpd, dmd_error, cpdmd]
+plugins: []
+slurm:
+  partition: gpu            # edit for your cluster
+  gres: "gpu:1"
+  time: "04:00:00"
+  cpus: 8
+  mem: 32G
+  max_parallel: 40
+  workers: 6
+  setup: "source ~/.bashrc; conda activate changepoint-jepa"   # edit
+  cache: cpbench_cache
