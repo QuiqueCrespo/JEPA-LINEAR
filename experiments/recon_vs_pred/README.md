@@ -182,3 +182,34 @@ Proposals to freeze after the complete pilot report, before releasing any HPC tr
 
 These are proposals, not amendments to implemented H1–H4 thresholds or a report that the pilot has finished.
 No additional experiment is launched by this status update.
+## Complete pilot results (exploratory: 18/18 runs, 1 seed, 3k steps, N0 / F2 / S2; 2026-10-16)
+Computed locally with the code of commit db6ac6f, i.e. *before* the audit amendment above: legacy scoring protocol
+(not `audit_v2`), stream version 1, evaluation trajectories from dataset seed 0. "MLP probe" below is `probe_mlp_pair`
+(two consecutive windows), not a single-window nonlinear probe. These numbers supersede the interim figures quoted
+in the pilot-first status section; they do not issue verdicts.
+`cpbench_results/recon_vs_pred_pilot.csv`, `experiment_recon_vs_pred_pilot_run.ipynb`.
+
+HMM accuracy (unsupervised, chance 0.5):
+
+| | N0 | F2 (fast) | S2 (slow) |
+|---|---|---|---|
+| jepa_separate / jepa_shared | 0.97 / 0.97 | 0.97 / 0.97 | 0.55 / 0.54 |
+| ae / vae | 0.97 / 0.97 | 0.54 / 0.97 | 0.54 / 0.55 |
+| cpc / ts2vec | 0.96 / 0.96 | 0.49 (collapsed) / 0.54 | 0.51 / 0.53 |
+| raw_flat / raw_lagcov | 0.97 / 0.97 | 0.51 / 0.97 | 0.53 / 0.97 |
+
+Mechanical verdicts on the pilot, informative only:
+
+| Test | Verdict | Note |
+|---|---|---|
+| Gates: oracle, N0 learnability | pass | |
+| Gate: no collapse | fail | CPC on F2 has effective rank 1.1 |
+| H1 | "supported" (+0.49) | Driven by the linear-probe bias. On the MLP probe the difference is +0.09 (0.976 vs 0.882), which is inconclusive. |
+| H2 | inconclusive | pred nuis_r2: F2 0.15, S2 0.17. JEPAs do not *linearly* keep the slow nuisance, yet it breaks their clustering. |
+| H3 | supported | pred HMM: F2 0.97, S2 0.55 |
+| H4 | not consistent | TS2Vec drops the fast nuisance like JEPA (R² 0.17) but still does not cluster |
+
+Proposed changes for the confirmatory HPC run, to be fixed before it is submitted:
+- H1 uses `probe_mlp`.
+- H2 adds a nonlinear (MLP) nuisance probe.
+- CPC's failure under nuisance is diagnosed and fixed or documented first. Its loss barely falls (×0.96–0.99), but it trains fine on N0.
