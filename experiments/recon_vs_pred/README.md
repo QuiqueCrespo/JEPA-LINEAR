@@ -218,7 +218,7 @@ Proposed changes for the confirmatory HPC run, to be fixed before it is submitte
 
 **Status.** This whole revision is *pilot-informed, fixed before HPC training*. It was written after the complete
 local pilot (above) had been inspected and before any HPC learner was trained. It is not a preregistration fixed before
-any experiment. Base commit: e3fc3f6. The amendment is frozen in the commit that adds this section. That commit's hash
+any experiment. Base commit: e3fc3f6. The amendment is frozen in commit **f4b3d41** (pushed to origin/main before any HPC submission). That commit's hash
 is recorded in the launch snapshot (`launch.json`, `amendment_commit`) and in the HPC results section. The held
 launch of the unrevised protocol (preflight 7470408, training 7470411, analysis 7470412) was never released. It is
 cancelled after this commit.
