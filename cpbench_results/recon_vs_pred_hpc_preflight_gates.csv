@@ -1,0 +1,2 @@
+test,verdict,numbers
+gate: oracle HMM acc >= 0.95 everywhere,pass,"N0 0.959, F1 0.959, F2 0.959, S1 0.959, S2 0.959"

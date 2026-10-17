@@ -1,0 +1,25 @@
+test,verdict,numbers
+gate: complete confirmatory protocol,pass,"missing=0, duplicates=False, finite=True, budget=True, protocol=True, fresh eval series=True"
+gate: oracle HMM acc >= 0.95 everywhere,pass,"N0 0.959, F1 0.959, F2 0.959, S1 0.959, S2 0.959"
+gate: some trained learner has probe >= 0.9 on N0,pass,best mean linear probe 0.981 (jepa_shared)
+"gate: no collapse (eff_rank > 2, final loss < loss at 1k; excl. pre-declared cpc)",pass,-
+"reported: pre-declared failed-to-train methods (cpc), collapse criterion",info,0/15 runs fail it: -
+control F1: family probe_mlp_single - untrained (0.609) >= 0.05,info,"pred +0.352: keeps regime, recon +0.330: keeps regime"
+control F1: family probe - untrained (0.605) >= 0.05,info,"pred +0.369: keeps regime, recon -0.049: does not meet retention criterion"
+control F2: family probe_mlp_single - untrained (0.548) >= 0.05,info,"pred +0.420: keeps regime, recon +0.399: keeps regime"
+control F2: family probe - untrained (0.540) >= 0.05,info,"pred +0.433: keeps regime, recon +0.046: does not meet retention criterion"
+control N0: family probe_mlp_single - untrained (0.714) >= 0.05,info,"pred +0.249: keeps regime, recon +0.243: keeps regime"
+control N0: family probe - untrained (0.748) >= 0.05,info,"pred +0.224: keeps regime, recon -0.231: does not meet retention criterion"
+control S1: family probe_mlp_single - untrained (0.616) >= 0.05,info,"pred +0.320: keeps regime, recon +0.301: keeps regime"
+control S1: family probe - untrained (0.600) >= 0.05,info,"pred +0.370: keeps regime, recon -0.037: does not meet retention criterion"
+control S2: family probe_mlp_single - untrained (0.579) >= 0.05,info,"pred +0.374: keeps regime, recon +0.334: keeps regime"
+control S2: family probe - untrained (0.564) >= 0.05,info,"pred +0.406: keeps regime, recon -0.017: does not meet retention criterion"
+"H1: F2 single-window MLP probe(pred) - (recon) >= 0.10, CI > 0",refuted,"diff +0.021, 95% CI [+0.011, +0.028]"
+secondary H1: F2 probe(pred) - (recon),secondary,"diff +0.387, 95% CI [+0.351, +0.414]"
+secondary H1: F2 probe_mlp_pair(pred) - (recon),secondary,"diff +0.028, 95% CI [+0.014, +0.042]"
+"H2: nuisance MLP R2 pred F2 <= 0.3, S2 >= 0.6; recon >= 0.6 on both",supported,pred F2 0.109 S2 0.742; recon F2 0.701 S2 0.947
+secondary H2: nuisance ridge R2,secondary,pred F2 0.173 S2 0.027; recon F2 0.742 S2 0.818
+H3a (legacy): HMM acc pred F2 >= 0.80 and >= S2 + 0.15,supported,"pred F2 0.966, S2 0.541"
+"H3b: F2 HMM acc(pred) - (recon) >= 0.10, CI > 0",refuted,"diff -0.001, 95% CI [-0.001, -0.001]"
+"exploratory: nuisance MLP R2 vs HMM acc (trained learners, F2+S2, seed level)",exploratory,"Spearman rho -0.532 (n=36, nominal p=0.000838); association only, not evidence of nuisance removal"
+H4 (exploratory): F2 nuisance R2 ts2vec - cpc >= 0.3,not consistent,"cpc pre-declared failed to train; ts2vec 0.139, cpc -0.020, jepa 0.173, ae/vae 0.742"

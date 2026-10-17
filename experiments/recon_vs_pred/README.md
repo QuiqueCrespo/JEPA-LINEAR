@@ -292,3 +292,32 @@ Conditions, learners, common settings (20k steps, seeds 0–2), detectors (persi
 oracle and N0 gates (the N0 gate still uses the linear probe), and the H4 definition are unchanged. The verdict rows
 are the gates, H1, H2, H3a (legacy), H3b and H4 (exploratory). Rows labelled `secondary`, `exploratory`, `info` or
 `reported` decide nothing. If any gate fails, every hypothesis is void.
+
+## Confirmatory HPC results (2026-10-16/17; amendment f4b3d41, protocol audit_v2+pilot_informed_v1)
+Launch `sweeps/recon_vs_pred/launch_20261016T200516Z` (frozen source at acbf892, 67 files, sha256-verified by every
+job). Jobs: preflight 7483705, training array 7483706 (100/100 completed, no requeues), analysis 7483707. Fresh
+evaluation series (eval_seed 20261016). Files: `cpbench_results/recon_vs_pred_hpc.csv` (+ `_verdicts.csv`,
+`_preflight_gates.csv`) and `experiment_recon_vs_pred_hpc_run.ipynb`.
+
+All gates pass. The completeness gate shows 0 missing and 0 duplicate runs, every metric finite, 20k steps throughout
+and the fresh evaluation series. The oracle HMM is 0.959 on every condition. The best N0 linear probe is 0.981
+(jepa_shared). No run collapsed: 0 of 15 pre-declared CPC runs and none of the other trained runs.
+
+| Hypothesis | Verdict | Deciding numbers |
+|---|---|---|
+| H1 (single-window MLP probe, F2, pred − recon) | **refuted** | +0.021, 95% CI [+0.011, +0.028] |
+| H2 (MLP nuisance R²) | **supported** | pred F2 0.109, S2 0.742; recon F2 0.701, S2 0.947 |
+| H3a (legacy: pred HMM F2 ≥ 0.80 and ≥ S2 + 0.15) | **supported** | pred F2 0.966, S2 0.541 |
+| H3b (F2 HMM, pred − recon) | **refuted** | −0.001, 95% CI [−0.001, −0.001] |
+| H4 (exploratory) | not consistent | F2 ridge R²: ts2vec 0.139, cpc −0.020 (CPC pre-declared failed to train) |
+
+Secondary and exploratory results, which decide nothing:
+- Linear probe, F2 pred − recon: +0.387, CI [+0.351, +0.414].
+- Pair MLP probe, F2 pred − recon: +0.028, CI [+0.014, +0.042].
+- Ridge nuisance R²: pred F2 0.173, S2 0.027; recon F2 0.742, S2 0.818.
+- Spearman ρ between nuisance MLP R² and HMM accuracy, over trained-learner runs in F2 and S2: −0.53 (n = 36).
+  This is an association only.
+
+Deviation from the frozen protocol: the first submission (7483594/5/6) failed in preflight after 8 s, before any
+training, because the launch-folder `preflight.py` could not import `experiments`. `PYTHONPATH` was set in the launch
+scripts (outside the hashed source), and the identical chain was resubmitted. No protocol, code or threshold changed.
