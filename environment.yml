@@ -1,0 +1,30 @@
+# Conda environment for this repo (cpbench + experiments + notebooks).
+#
+#   source /lus/lfs1aip2/projects/b5ci/Quique/miniforge3/bin/activate      # no `conda init` on Isambard
+#   conda env create --file environment.yml
+#   conda activate jepa-linear
+#   python -m ipykernel install --user --name jepa-linear --display-name "Python (jepa-linear)"
+#
+# The scientific stack is pinned to the exact versions that produced the committed recon_vs_pred results
+# (installed from PyPI wheels, as in the original environment). On linux-aarch64 (Isambard-AI GH200) the PyPI torch
+# wheel bundles CUDA 13.0.
+name: jepa-linear
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  # notebooks
+  - ipykernel
+  - nbconvert
+  - nbformat
+  - pip:
+      - numpy==2.5.1
+      - scipy==1.18.0
+      - pandas==3.0.6
+      - scikit-learn==1.9.1
+      - matplotlib==3.11.2
+      - omegaconf==2.4.0
+      - torch==2.14.1
+      - pytest==9.1.1
+      - -e .
