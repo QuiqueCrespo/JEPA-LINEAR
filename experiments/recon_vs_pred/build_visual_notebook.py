@@ -57,11 +57,24 @@ target (CPC) and with a same-time target (TS2Vec); controls: untrained encoder, 
 
 code(r'''
 import os, sys, json, glob
+# Cap library threads BEFORE numpy/torch/sklearn load: login nodes limit threads per user, and t-SNE / OpenBLAS / torch
+# otherwise start one thread per core ("libgomp: Thread creation failed"). Compute-node jobs may set a larger value.
+NJ = int(os.environ.setdefault("OMP_NUM_THREADS", "4"))
+for _v in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"): os.environ.setdefault(_v, str(NJ))
 L = os.environ.get("CPBENCH_LAUNCH", "sweeps/recon_vs_pred/launch_20261016T200516Z")
 os.environ["CPBENCH_CACHE"] = os.path.abspath(os.path.join(L, "cache"))      # before importing cpbench
 RUNS = os.path.abspath(os.path.join(L, "runs"))
 sys.path[:0] = ["experiments/recon_vs_pred", "."]
 import cpbench  # noqa: F401
+import torch; torch.set_num_threads(NJ)
+# Heavy results (t-SNE embeddings, HMM decodings) are cached here: a compute-node run fills the cache once, after which
+# sections 3-4 only load them (fast, and light enough for an interactive session on a login node).
+VIS = os.path.abspath(os.path.join(L, "visual_cache")); os.makedirs(VIS, exist_ok=True)
+def cached(name, fn):
+    path = os.path.join(VIS, name + ".npz")
+    if os.path.exists(path):
+        with np.load(path) as z: return tuple(z[k] for k in sorted(z.files))
+    out = fn(); np.savez(path, **{f"a{i}": a for i, a in enumerate(out)}); return out
 import numpy as np, pandas as pd, matplotlib as mpl, matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.lines import Line2D
@@ -237,7 +250,7 @@ LONG = {c: components(c, n=16000, R=2, tag=98) for c in CONDS}
 COMPC = dict(signal=INK, nuisance=ORANGE, noise=AQUA)
 fig, ax = plt.subplots(1, 6, figsize=(19, 3.4), gridspec_kw=dict(width_ratios=[1.4, 1, 1, 1, 1, 1]))
 share = pd.DataFrame({c: {p: LONG[c][p].var() for p in COMPC} for c in CONDS}).T
-share = share.div(share.sum(1), axis=0)
+share = share.div(share.sum(axis=1), axis=0)
 left = np.zeros(len(CONDS))
 for p, col in COMPC.items():
     ax[0].barh(range(len(CONDS)), share[p], left=left, color=col, height=0.6, label=p, edgecolor="white", lw=2)
@@ -615,7 +628,7 @@ def embed(Z):
     k = min(2, Zs.shape[1]); P = PCA(k).fit_transform(Zs)
     if k == 1: P = np.c_[P, np.zeros(len(P))]
     X = PCA(50).fit_transform(Zs) if Zs.shape[1] > 50 else Zs
-    E = TSNE(2, perplexity=30, init="pca", random_state=0).fit_transform(X)
+    E = TSNE(2, perplexity=30, init="pca", random_state=0, n_jobs=NJ).fit_transform(X)
     return P, E
 
 def latent_figure(c):
@@ -625,7 +638,7 @@ def latent_figure(c):
     fig, ax = plt.subplots(len(ORDER), 5, figsize=(14, 2.3 * len(ORDER)), gridspec_kw=dict(hspace=0.35, wspace=0.18))
     for i, key in enumerate(ORDER):
         Z, _ = feats(c, key)
-        P, E = embed(Z.reshape(-1, Z.shape[-1]))
+        P, E = cached(f"embed_{c}_{key}_s0", lambda: embed(Z.reshape(-1, Z.shape[-1])))
         yf, uf = y.ravel(), u.ravel()
         for j, (XY, colour) in enumerate(((P, "reg"), (P, "nuis"), (E, "reg"), (E, "nuis"))):
             a = ax[i, j]
@@ -687,7 +700,7 @@ def time_figure(c):
         a.plot(t, nz(score), color=INK, lw=1.1, label="linear regime axis (fit on other series)")
         a.plot(t, nz(pc), color=MUTED, lw=1, label="feature PC1")
         if CONDITIONS[c][1]: a.plot(t, nz(u[s0]), ":", color=INK2, lw=1, label="true nuisance")
-        lab = make_detector(HMM).detect(Z, 2, seed=0)["labels"]
+        lab, = cached(f"hmm_{c}_{key}_s0", lambda: (make_detector(HMM).detect(Z, 2, seed=0)["labels"],))
         m = {q: np.bincount(y[lab == q], minlength=2).argmax() for q in np.unique(lab)}
         dec = np.vectorize(m.get)(lab)
         a.bar(t, 0.22, bottom=-1.33, width=1.0, color=[REG[k] for k in y[s0]], lw=0)
@@ -830,6 +843,6 @@ plt.tight_layout(); plt.show()
 ''')
 
 nb = nbf.v4.new_notebook(); nb["cells"] = cells
-nb["metadata"]["kernelspec"] = dict(name="python3", display_name="Python 3", language="python")
+nb["metadata"]["kernelspec"] = dict(name="jepa-linear", display_name="Python (jepa-linear)", language="python")
 out = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "experiment_recon_vs_pred_visual.ipynb")
 nbf.write(nb, out); print("written", out)
