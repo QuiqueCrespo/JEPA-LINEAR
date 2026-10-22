@@ -12,17 +12,47 @@ md = lambda s: cells.append(nbf.v4.new_markdown_cell(s.strip()))
 code = lambda s: cells.append(nbf.v4.new_code_cell(s.strip()))
 
 md("""
-# Reconstruction vs contrastive vs prediction: visual tour of the confirmatory run
+# Reconstruction vs contrastive vs prediction: what was run, what came out, and what it looks like
 
-Display only. It reads the frozen HPC launch: cached test-set features, run logs and the committed result CSVs.
-Nothing is retrained, and nothing here changes a verdict. The identifiability panels are **exploratory and post hoc**.
+Display only. It reads the frozen HPC launch (cached test-set features and run logs) and the committed result CSVs.
+Nothing is retrained, and nothing here changes a verdict.
 
-1. **The data**: regime, rotation latent, nuisance (fast vs slow), observations, and the context/gap/target geometry
-2. **Results overview**: verdicts, every metric as a heatmap, paired effects with CIs, the linear-vs-nonlinear geometry
-3. **Latent spaces**: PCA, t-SNE and the linear-probe axis for every learner and condition, coloured by regime and by nuisance
-4. **Time domain**: feature trajectories and the HMM's decoded regime against the truth
-5. **Training dynamics**: loss, effective rank and validation clustering over 20k steps
-6. **CPC trainability check**
+**Contents**
+
+0. **Recap**: every experiment run so far, and every verdict
+1. **The data**: the three latent processes; the exact decomposition of the observations into signal, nuisance and
+   noise for every condition; how big and how fast each part is; why fast vs slow nuisance matters for prediction
+2. **Results for every variation**: every metric for every condition × learner × seed (heatmaps, per-seed dots,
+   paired effects, dose response, full tables)
+3. **Latent spaces**: PCA, t-SNE and the linear-probe axis for every learner and condition
+4. **Time domain**: linear regime axis vs dominant direction vs HMM decoding
+5. **Training dynamics**
+6. **The other experiments**: preflight control audit on the fresh series, the exploratory pilot (context only,
+   never pooled) and the CPC trainability check
+""")
+md("""
+## 0. Recap
+
+### Experiments run
+
+| # | Experiment | What | Status | Files |
+|---|---|---|---|---|
+| 1 | Control audit | oracle, raw features, untrained encoder on all 5 conditions; no learner trained | done before pre-registration amendment; pilot evaluation series | `cpbench_results/recon_vs_pred_audit.csv` |
+| 2 | Local pilot | N0, F2, S2 × 6 learners × 1 seed × 3k steps; legacy code (pre-`audit_v2`) | **exploratory**; motivated the amendment | `cpbench_results/recon_vs_pred_pilot.csv` |
+| 3 | Pilot-informed amendment | H1 → single-window MLP probe; H2 → MLP nuisance probe; H3 split into H3a (legacy) and H3b; fresh evaluation series (`eval_seed` 20261016) | frozen in f4b3d41 before HPC training | README |
+| 4 | CPC trainability check | CPC, F2, 3k steps, temperature {0.1, 0.5} × lr {3e-4, 1e-4}; label-free selection | no setting passed: CPC pre-declared "failed to train" | `cpbench_results/recon_vs_pred_cpc_check.csv` |
+| 5 | **Confirmatory HPC run** | 5 conditions × 6 learners × 3 seeds × 20k steps (90 runs) + 4 controls × 5 conditions; preflight control gates on the fresh series | **all gates pass; verdicts below** | `cpbench_results/recon_vs_pred_hpc*.csv` |
+| 6 | Linear identifiability | ridge vs MLP R² from features to the true rotation latent and to the regime statistic | **exploratory, post hoc** | `cpbench_results/recon_vs_pred_identifiability.csv` |
+
+**Conditions** (only the nuisance changes; the signal, renderings and noise are identical):
+
+| | N0 | F1 | F2 | S1 | S2 |
+|---|---|---|---|---|---|
+| nuisance timescale | none | fast, tau = 16 | fast, tau = 16 | slow, tau = 2000 | slow, tau = 2000 |
+| nuisance amplitude sigma_n | 0 | 1 | 2 | 1 | 2 |
+
+**Learners:** reconstruction (AE, VAE), prediction (JEPA separate / shared encoders), contrastive with a future
+target (CPC) and with a same-time target (TS2Vec); controls: untrained encoder, raw windows, raw lag covariance, oracle.
 """)
 
 code(r'''
@@ -44,7 +74,7 @@ from cpbench import Benchmark
 from cpbench.data import Dataset
 from cpbench.data.windows import majority_labels
 from cpbench.detectors import make_detector
-from design import CONDITIONS, CONTROLS, LEARNERS, W, GAP, TAU, EVAL_SEED, dataset
+from design import CONDITIONS, CONTROLS, LEARNERS, W, GAP, TAU, NOISE, EVAL_SEED, dataset
 from experiment import learner, control, FAMILY, PRED, RECON, _boot_diff
 
 # palette: one hue per family (validated first three slots of the reference palette), gray controls,
@@ -85,38 +115,202 @@ assert df.protocol.nunique() == 1 and (df.eval_seed == EVAL_SEED).all()
 print(L, "|", len(df), "rows |", df.protocol.iloc[0], "| eval_seed", EVAL_SEED)
 ''')
 
+md("""
+### Verdicts of the confirmatory run
+""")
+code(r'''
+v = pd.read_csv(os.path.join(L, "verdicts.csv"))
+with pd.option_context("display.max_colwidth", 160, "display.width", 250, "display.max_rows", 100):
+    display(v)
+''')
+
+
 # ------------------------------------------------------------------ 1. data
 md("""
 ## 1. The data
 
-`obs = render(rotation latent) + sigma_n · render(nuisance AR(1)) + noise`. The regime is the **direction** of a damped
-2-D rotation (ω = ±0.12 rad/sample, period about 52 samples). Only the nuisance changes between conditions.
-Below is the first 1500 samples of test series 0 in every condition. Shading marks regime 1.
+`observed = signal + nuisance + noise`, then per-channel standardisation.
+
+- **signal** = random Fourier rendering (64 channels) of the 2-D **rotation latent**. The regime is the rotation
+  direction (ω = ±0.12 rad/sample, period about 52 samples, damping 0.98).
+- **nuisance** = sigma_n × an independent random Fourier rendering of a 2-D **AR(1) latent**, either fast (tau = 16) or
+  slow (tau = 2000). It is independent of the regime.
+- **noise** = white, sigma 0.3 per channel.
+
+### 1a. The three latent processes
+
+These are the hidden variables before rendering, on the same axes. Shading marks regime 1. The rotation (top) is
+identical in every condition; only which nuisance is added, and how much of it, changes.
 """)
 code(r'''
-seg = slice(0, 1500)
-fig, ax = plt.subplots(3, 5, figsize=(17, 7.2), sharex=True, gridspec_kw=dict(height_ratios=[1, 1, 1.7], hspace=0.12, wspace=0.12))
+t = benches["F2"].test; ts = benches["S2"].test
+seg = slice(0, 1500); S = t["S_s"][0, seg]; x = np.arange(len(S))
+assert np.allclose(t["latent"], ts["latent"])            # same rotation latent in every condition
+rows = [("rotation latent (signal)", t["latent"][0, seg]), ("fast nuisance latent (tau = 16)", t["nuisance"][0, seg]),
+        ("slow nuisance latent (tau = 2000)", ts["nuisance"][0, seg])]
+fig, ax = plt.subplots(3, 1, figsize=(16, 6), sharex=True, sharey=True)
+for a, (name, z) in zip(ax, rows):
+    a.fill_between(x, 0, 1, where=S == 1, transform=a.get_xaxis_transform(), color=RED, alpha=0.12, lw=0)
+    a.plot(x, z[:, 0], color=INK, lw=0.7); a.plot(x, z[:, 1], color=MUTED, lw=0.7)
+    a.set_ylabel(name, rotation=0, ha="right", va="center"); a.axhline(0, color=RULE, lw=1, zorder=0)
+ax[-1].set_xlabel("sample (test series 0)")
+fig.suptitle("Latent processes (unit scale, both coordinates; regime 1 shaded). Conditions multiply the nuisance latent by sigma_n.", fontsize=10)
+plt.tight_layout(); plt.show()
+''')
+md("""
+### 1b. What each condition adds to the observations
+
+The observation decomposes **exactly** into its three parts. Each part is re-simulated with the same random draws,
+with the other parts switched off (checked to 1e-6). Every heatmap shares one colour scale, in raw units before
+standardisation, so the panels can be compared directly. Rows show signal, nuisance, noise, their sum, and finally
+what the learners actually receive (the standardised observation). It shows 400 samples around a regime switch, with
+the regime marked above each column (blue 0, red 1). The signal row is identical across conditions by construction.
+""")
+code(r'''
+def components(c, n=1500, R=1, tag=99):
+    """obs = signal + nuisance + noise exactly (before standardisation); same regime path, latents and noise draws."""
+    def draw(sigma_n, noise, standardize=False):
+        d = dataset(c); d["standardize"] = standardize
+        d["sources"][1]["scale"] = sigma_n; d["transforms"][1]["sigma"] = noise
+        return Dataset(d).sample(R, n, np.random.default_rng([EVAL_SEED, tag]))
+    sn = CONDITIONS[c][1]
+    full, sig = draw(sn, NOISE), draw(0.0, 0.0)
+    nuis = draw(sn, 0.0)["obs"] - sig["obs"]; noise = draw(0.0, NOISE)["obs"] - sig["obs"]
+    assert np.abs(full["obs"] - (sig["obs"] + nuis + noise)).max() < 1e-4
+    return dict(signal=sig["obs"], nuisance=nuis, noise=noise, observed=full["obs"],
+                standardised=draw(sn, NOISE, True)["obs"], S=full["S_s"], latent=full["latent"], u=full["nuisance"])
+COMP = {c: components(c) for c in CONDS}
+PARTS = ["signal", "nuisance", "noise", "observed"]
+sw = 200 + int(np.flatnonzero(np.diff(COMP["N0"]["S"][0, 200:]) != 0)[0])     # first regime switch after sample 200
+seg = slice(sw - 200, sw + 200)
+vmax = 3 * COMP["N0"]["signal"].std()
+fig, ax = plt.subplots(6, 5, figsize=(17, 13), sharex=True, gridspec_kw=dict(height_ratios=[0.12, 1, 1, 1, 1, 1], hspace=0.12, wspace=0.06))
 for j, c in enumerate(CONDS):
-    t = benches[c].test; S = t["S_s"][0, seg]; x = np.arange(len(S))
-    for i in range(2):
-        ax[i, j].fill_between(x, 0, 1, where=S == 1, transform=ax[i, j].get_xaxis_transform(), color=RED, alpha=0.14, lw=0)
-    for k, col in enumerate((INK, MUTED)):
-        ax[0, j].plot(x, t["latent"][0, seg, k], color=col, lw=0.6)
-        ax[1, j].plot(x, CONDITIONS[c][1] * t["nuisance"][0, seg, k], color=col, lw=0.6)
-    ax[1, j].set_ylim(-7, 7)
-    ax[2, j].imshow(t["obs"][0, seg].T, aspect="auto", cmap=DIV, vmin=-3, vmax=3)
-    sp, sn = CONDITIONS[c]
-    ax[0, j].set_title(f"{c}: {'no nuisance' if sn == 0 else f'{sp} nuisance (tau={TAU[sp]}), sigma_n={sn:g}'}")
-    ax[2, j].set_xlabel("sample")
-    if j:
-        for i in range(3): ax[i, j].set_yticklabels([])
-ax[0, 0].set_ylabel("rotation latent\n(regime shaded)"); ax[1, 0].set_ylabel("nuisance x sigma_n"); ax[2, 0].set_ylabel("64 observed channels")
+    C = COMP[c]; S = C["S"][0, seg]
+    ax[0, j].imshow(S[None], aspect="auto", cmap=mpl.colors.ListedColormap(REG), vmin=0, vmax=1)
+    ax[0, j].set_yticks([]); sp, sn = CONDITIONS[c]
+    ax[0, j].set_title(f"{c}: {'no nuisance' if sn == 0 else f'{sp} nuisance x {sn:g}'}", fontsize=10)
+    for i, part in enumerate(PARTS + ["standardised"], 1):
+        im = ax[i, j].imshow(C[part][0, seg].T, aspect="auto", cmap=DIV, vmin=-vmax, vmax=vmax)
+        if j == 0: ax[i, j].set_ylabel(part + ("\n(what learners see)" if part == "standardised" else "\n(64 channels)"))
+        else: ax[i, j].set_yticks([])
+    ax[-1, j].set_xlabel("sample")
+ax[0, 0].set_ylabel("regime", rotation=0, ha="right", va="center")
+fig.subplots_adjust(right=0.9)
+fig.colorbar(im, cax=fig.add_axes([0.92, 0.3, 0.01, 0.35]), label="value (raw units; standardised row: z-score)")
 plt.show()
 ''')
 md("""
-**The regime is the rotation direction.** Each regime traces the same circle, in opposite directions. A single
-window's mean or variance can't tell them apart. It needs a phase-ordered (lag-covariance) statistic, which is why
-raw-window linear probes sit at chance.
+### 1c. One channel, one context–target pair
+
+This shows the channel with the strongest signal, first 400 samples. Lines are the signal (black), the nuisance (orange) and their sum
+with noise (gray). The blue span is a context window and the orange span its target, 96 samples later. Fast nuisance
+wiggles within each window and is unrelated between context and target. Slow nuisance is a near-constant offset that
+carries from context to target. The rendering is a bounded (Fourier) map, so large nuisance values saturate.
+""")
+code(r'''
+CH = int(COMP["N0"]["signal"][0].var(0).argmax())                                  # channel with the strongest signal
+fig, ax = plt.subplots(1, 5, figsize=(18, 3.2), sharey=True)
+x = np.arange(400)
+for a, c in zip(ax, CONDS):
+    C = COMP[c]
+    for lo, col in ((0, BLUE), (W + GAP, ORANGE)):
+        a.axvspan(lo + 120, lo + 120 + W, color=col, alpha=0.12, lw=0)
+    a.plot(x, C["observed"][0, :400, CH], color=MUTED, lw=0.7, label="observed")
+    a.plot(x, C["signal"][0, :400, CH], color=INK, lw=1, label="signal")
+    a.plot(x, C["nuisance"][0, :400, CH], color=ORANGE, lw=1.2, label="nuisance")
+    a.set_title(c, loc="left"); a.set_xlabel("sample")
+ax[0].set_ylabel(f"channel {CH} (raw units)"); fig.legend(*ax[0].get_legend_handles_labels(), loc="upper right", ncol=3, fontsize=8)
+plt.tight_layout(rect=[0, 0, 1, 0.88]); plt.show()
+''')
+md("""
+### 1d. How big and how fast each part is
+
+**Left:** each part's share of the observed variance. At sigma_n = 2 the nuisance has about 4 times the signal's
+variance, in both the fast and the slow version. **Right:** the power spectra (Welch, averaged over channels). The
+signal peaks at the rotation frequency (0.019 cycles/sample). Fast nuisance is broadband and slow nuisance is
+concentrated near zero frequency. The dotted line marks one cycle per window (1/64).
+""")
+code(r'''
+from scipy.signal import welch
+LONG = {c: components(c, n=16000, R=2, tag=98) for c in CONDS}
+COMPC = dict(signal=INK, nuisance=ORANGE, noise=AQUA)
+fig, ax = plt.subplots(1, 6, figsize=(19, 3.4), gridspec_kw=dict(width_ratios=[1.4, 1, 1, 1, 1, 1]))
+share = pd.DataFrame({c: {p: LONG[c][p].var() for p in COMPC} for c in CONDS}).T
+share = share.div(share.sum(1), axis=0)
+left = np.zeros(len(CONDS))
+for p, col in COMPC.items():
+    ax[0].barh(range(len(CONDS)), share[p], left=left, color=col, height=0.6, label=p, edgecolor="white", lw=2)
+    for i, (l0, w) in enumerate(zip(left, share[p])):
+        if w > 0.06: ax[0].text(l0 + w / 2, i, f"{w:.0%}", ha="center", va="center", color="white", fontsize=8)
+    left += share[p].to_numpy()
+ax[0].set_yticks(range(len(CONDS)), CONDS); ax[0].invert_yaxis(); ax[0].set_xlim(0, 1)
+ax[0].set_title("share of observed variance"); ax[0].legend(fontsize=7, loc="lower right", bbox_to_anchor=(1, 1.08), ncol=3)
+for a, c in zip(ax[1:], CONDS):
+    for p, col in COMPC.items():
+        X = LONG[c][p]
+        if X.std() == 0: continue
+        f, P = welch(X, nperseg=1024, axis=1); P = P.mean(axis=(0, 2))
+        a.loglog(f[1:], P[1:], color=col, lw=1.3, label=p)
+    a.axvline(0.12 / (2 * np.pi), color=RULE, lw=1.5, zorder=0); a.axvline(1 / W, ls=":", color=MUTED, lw=1)
+    a.set_title(c); a.set_xlabel("frequency (cycles/sample)"); a.set_ylim(1e-6, 1e2)
+ax[1].set_ylabel("power"); ax[1].legend(fontsize=7, loc="lower left")
+plt.tight_layout(); plt.show()
+''')
+md("""
+### 1e. Why the type of nuisance matters for prediction
+
+Each point is one context–target pair: the nuisance part of the observation (mean over the context window), against
+the same quantity in the target window 96 samples later. A predictor can exploit the nuisance only if the target's
+nuisance is predictable from the context's.
+
+- **Fast (F):** a shapeless cloud (r ≈ 0). Predicting the target gains nothing from the nuisance.
+- **Slow (S):** the points lie on the diagonal (r ≈ 0.9). The nuisance is the easiest thing to predict.
+- **Signal:** its window mean barely carries over (r ≈ 0.15). What a predictor can use from the signal is the rotation
+  direction, which is a property of phase order, not of level.
+
+The r values are printed in each panel title.
+""")
+code(r'''
+fig, ax = plt.subplots(1, 6, figsize=(19, 3.3))
+starts = np.arange(0, 16000 - 2 * W - GAP, 2 * W + GAP)
+def pair_means(X):
+    ctx = np.stack([X[:, s:s + W].mean(1) for s in starts], 1); tgt = np.stack([X[:, s + W + GAP:s + 2 * W + GAP].mean(1) for s in starts], 1)
+    return ctx[..., 0].ravel(), tgt[..., 0].ravel()
+for a, c in zip(ax[:5], CONDS):
+    if CONDITIONS[c][1] == 0:
+        a.text(0.5, 0.5, "no nuisance", ha="center", va="center", transform=a.transAxes, color=MUTED); a.set_title(c); a.set_xticks([]); a.set_yticks([]); continue
+    cx, tx = pair_means(LONG[c]["nuisance"])
+    a.scatter(cx, tx, s=6, color=ORANGE, alpha=0.6, lw=0); lim = np.abs(np.r_[cx, tx]).max() * 1.05
+    a.plot([-lim, lim], [-lim, lim], color=RULE, lw=1.5, zorder=0); a.set_xlim(-lim, lim); a.set_ylim(-lim, lim)
+    a.set_title(f"{c} nuisance: r = {np.corrcoef(cx, tx)[0, 1]:.2f}"); a.set_xlabel("context mean (ch. 0)")
+ax[0].set_ylabel("target mean (ch. 0)")
+cx, tx = pair_means(LONG["N0"]["signal"])
+ax[5].scatter(cx, tx, s=6, color=INK, alpha=0.5, lw=0); ax[5].set_title(f"signal (any cond.): r = {np.corrcoef(cx, tx)[0, 1]:.2f}")
+ax[5].set_xlabel("context mean (ch. 0)")
+plt.tight_layout(); plt.show()
+''')
+md("""
+### 1f. What the observations look like once standardised, condition by condition
+
+This compares the per-channel standardised observation of one test series across conditions, with 1500 samples and
+regime 1 shaded above. In N0 the texture is the rotation alone. F adds dense, fast speckle. S adds slowly drifting
+horizontal bands, a per-channel offset that changes over thousands of samples.
+""")
+code(r'''
+seg = slice(0, 1500)
+fig, ax = plt.subplots(2, 5, figsize=(17, 4.6), sharex=True, gridspec_kw=dict(height_ratios=[0.1, 1], hspace=0.05, wspace=0.05))
+for j, c in enumerate(CONDS):
+    t = benches[c].test
+    ax[0, j].imshow(t["S_s"][0, seg][None], aspect="auto", cmap=mpl.colors.ListedColormap(REG), vmin=0, vmax=1); ax[0, j].set_yticks([])
+    ax[0, j].set_title(c)
+    ax[1, j].imshow(t["obs"][0, seg].T, aspect="auto", cmap=DIV, vmin=-3, vmax=3)
+    ax[1, j].set_xlabel("sample");  ax[1, j].set_yticks([] if j else [0, 32, 63])
+ax[1, 0].set_ylabel("channel (standardised)")
+plt.show()
+''')
+md("""
+### 1g. The regime itself
 """)
 code(r'''
 t = benches["N0"].test; S = t["S_s"][0]; Z = t["latent"][0]
@@ -169,74 +363,149 @@ ax[2].set_xlabel("lag (samples)"); ax[2].set_ylabel("autocorrelation"); ax[2].le
 plt.tight_layout(); plt.show()
 ''')
 
-# ------------------------------------------------------------------ 2. results overview
+
+# ------------------------------------------------------------------ 2. results
 md("""
-## 2. Results overview
+## 2. Results for every variation
 
 All gates passed, so these verdicts are confirmatory. Rows marked `secondary`, `exploratory`, `info` or `reported`
-decide nothing.
+decide nothing. Every metric recorded for the 110 confirmatory rows (5 conditions × (6 learners × 3 seeds + 4
+controls)) is shown below.
 """)
 code(r'''
 v = pd.read_csv(os.path.join(L, "verdicts.csv"))
-with pd.option_context("display.max_colwidth", 140, "display.width", 250):
-    display(v[~v.test.str.startswith("control")])
+with pd.option_context("display.max_colwidth", 160, "display.width", 250, "display.max_rows", 100):
+    display(v)
 ''')
 md("""
-**Every metric, learner × condition** (mean over 3 seeds for trained learners). Probes and clustering use a blue
-scale from 0.5 (chance) to 1. R² uses a diverging scale centred on 0: blue is below the test-mean baseline, red above.
-`lat_*` and `stat_*` are the exploratory identifiability scores (true rotation latent, and the regime-carrying
-lag-covariance statistic).
+### 2a. Every metric as a heatmap (learner × condition, mean over seeds)
+
+Colour scales:
+- accuracies and probes run from 0.5 (chance) to 1;
+- change-point scores run from 0 to 1;
+- R² uses a diverging scale centred on 0;
+- the other metrics use their own range.
+
+Controls have one row (seed 0). Groups:
+- **retention:** regime probes
+- **nuisance:** nuisance accessibility and sensitivity
+- **clustering:** regime recovery without labels
+- **change points:** HMM and GMM change-point scores
+- **identifiability:** exploratory
+- **geometry and training:** effective rank, loss drop, parameter counts
+
+One secondary result is worth noting (descriptive; decides nothing). The *fixed whitened* HMM, without persistence
+selection, recovers the regime on S2 from AE/VAE features (0.97) but not from the JEPAs (≈ 0.53). So the S-condition
+failure of the reconstruction learners under the primary HMM comes from its persistence-based model selection, not
+from their features. The fixed fit does not help the JEPAs. It also fails on `raw_lagcov` and the oracle (≈ 0.5),
+where the primary detector succeeds, so neither detector dominates.
 """)
 code(r'''
-M = [("probe_mlp_single", "regime: MLP probe (H1)", "p"), ("probe", "regime: linear probe", "p"),
-     ("hmm", "HMM accuracy (H3)", "p"), ("gmm", "GMM accuracy", "p"), ("eff_rank", "effective rank", "r"),
-     ("nuis_mlp_r2", "nuisance: MLP R² (H2)", "d"), ("nuis_r2", "nuisance: ridge R²", "d"),
-     ("lat_lin", "latent: linear R²", "d"), ("lat_mlp", "latent: MLP R²", "d"),
-     ("stat_lin", "regime stat: linear R²", "d"), ("stat_mlp", "regime stat: MLP R²", "d")]
+SPEC = {  # metric: (title, colour, lo, hi, fmt)
+    "probe_mlp_single": ("regime: single-window MLP probe (H1)", "seq", 0.5, 1, ".2f"),
+    "probe": ("regime: linear probe", "seq", 0.5, 1, ".2f"),
+    "probe_mlp_pair": ("regime: window-pair MLP probe", "seq", 0.5, 1, ".2f"),
+    "nuis_mlp_r2": ("nuisance: MLP R² (H2)", "div", -1, 1, ".2f"),
+    "nuis_r2": ("nuisance: ridge R²", "div", -1, 1, ".2f"),
+    "nuis_paired_distance": ("nuisance resample: feature shift", "seq", 0, None, ".2f"),
+    "hmm": ("HMM accuracy (H3)", "seq", 0.5, 1, ".2f"), "gmm": ("GMM accuracy", "seq", 0.5, 1, ".2f"),
+    "hmm_fixed_acc": ("HMM acc, fixed whitened fit", "seq", 0.5, 1, ".2f"), "gmm_fixed_acc": ("GMM acc, fixed whitened fit", "seq", 0.5, 1, ".2f"),
+    "hmm_cp_ap": ("HMM change points: AP", "seq", 0, 1, ".2f"), "hmm_cp_f1": ("HMM change points: F1", "seq", 0, 1, ".2f"),
+    "hmm_cp_f1_best": ("HMM change points: best-threshold F1", "seq", 0, 1, ".2f"), "hmm_cp_covering": ("HMM segmentation covering", "seq", 0, 1, ".2f"),
+    "gmm_cp_ap": ("GMM change points: AP", "seq", 0, 1, ".2f"), "gmm_cp_f1": ("GMM change points: F1", "seq", 0, 1, ".2f"),
+    "gmm_cp_f1_best": ("GMM change points: best-threshold F1", "seq", 0, 1, ".2f"), "gmm_cp_covering": ("GMM segmentation covering", "seq", 0, 1, ".2f"),
+    "lat_lin": ("rotation latent: linear R²", "div", -1, 1, ".2f"), "lat_mlp": ("rotation latent: MLP R²", "div", -1, 1, ".2f"),
+    "stat_lin": ("regime statistic: linear R²", "div", -1, 1, ".2f"), "stat_mlp": ("regime statistic: MLP R²", "div", -1, 1, ".2f"),
+    "eff_rank": ("effective rank", "seq", 0, 16, ".1f"), "loss_drop": ("final loss / loss at 1k", "seq", 0, 1, ".2f"),
+    "parameters_total": ("parameters (thousands)", "seq", 0, None, "k"),
+}
+GROUPS = {"retention": ["probe_mlp_single", "probe", "probe_mlp_pair"],
+          "nuisance": ["nuis_mlp_r2", "nuis_r2", "nuis_paired_distance"],
+          "clustering accuracy": ["hmm", "gmm", "hmm_fixed_acc", "gmm_fixed_acc"],
+          "change points (HMM)": ["hmm_cp_ap", "hmm_cp_f1", "hmm_cp_f1_best", "hmm_cp_covering"],
+          "change points (GMM)": ["gmm_cp_ap", "gmm_cp_f1", "gmm_cp_f1_best", "gmm_cp_covering"],
+          "identifiability (exploratory)": ["lat_lin", "lat_mlp", "stat_lin", "stat_mlp"],
+          "geometry and training": ["eff_rank", "loss_drop", "parameters_total"]}
 mean = df.groupby(["learner", "cond"]).mean(numeric_only=True)
-fig, axes = plt.subplots(2, 6, figsize=(19, 7.5), gridspec_kw=dict(wspace=0.08, hspace=0.3))
-for n, (a, (m, title, kind)) in enumerate(zip(axes.ravel(), M)):
+sd = df.groupby(["learner", "cond"]).std(numeric_only=True)
+def heat(a, m, show_y):
+    title, kind, lo, hi, fmt = SPEC[m]
     T = mean[m].unstack()[CONDS].reindex(ORDER)
-    cmap, lo, hi = (SEQ, 0.5, 1.0) if kind == "p" else (DIV, -1, 1) if kind == "d" else (SEQ, 0, 16)
-    a.imshow(T.values, cmap=cmap, vmin=lo, vmax=hi, aspect="auto")
+    if hi is None: hi = np.nanmax(T.values)
+    a.imshow(np.ma.masked_invalid(T.values), cmap=SEQ if kind == "seq" else DIV, vmin=lo, vmax=hi, aspect="auto")
     for (i, j), val in np.ndenumerate(T.values):
-        frac = (np.clip(val, lo, hi) - lo) / (hi - lo)
-        dark = frac > 0.6 if kind != "d" else abs(val) > 0.6
-        a.text(j, i, f"{val:.2f}" if kind != "r" else f"{val:.1f}", ha="center", va="center", fontsize=6.5,
-               color="white" if dark else INK)
-    a.set_xticks(range(5), CONDS); a.set_title(title)
-    a.set_yticks(range(len(ORDER)), ORDER if n % 6 == 0 else [])
-    for s in a.spines.values(): s.set_visible(False)
-axes.ravel()[-1].axis("off")
-plt.show()
+        if not np.isfinite(val): a.text(j, i, "–", ha="center", va="center", color=MUTED, fontsize=7); continue
+        dark = abs(val) > 0.6 * max(abs(lo), abs(hi)) if kind == "div" else (np.clip(val, lo, hi) - lo) / (hi - lo) > 0.6
+        txt = f"{val / 1000:.0f}k" if fmt == "k" else format(val, fmt)
+        a.text(j, i, txt, ha="center", va="center", fontsize=6.5, color="white" if dark else INK)
+    a.set_xticks(range(5), CONDS); a.set_title(title, fontsize=8.5)
+    a.set_yticks(range(len(ORDER)), ORDER if show_y else [])
+    for sp in a.spines.values(): sp.set_visible(False)
+for g, ms in GROUPS.items():
+    fig, axes = plt.subplots(1, 4, figsize=(17, 3.9), gridspec_kw=dict(wspace=0.06))
+    for k, a in enumerate(axes):
+        if k < len(ms): heat(a, ms[k], k == 0)
+        else: a.axis("off")
+    fig.suptitle(g, x=0.02, ha="left", fontsize=11, fontweight="bold"); plt.show()
 ''')
 md("""
-**Paired family effects (prediction − reconstruction), every condition.** Gray dots are the three per-seed paired
-differences. Black is the mean with its 95% bootstrap CI. The dashed lines are the pre-registered bands: < 0.05
-refutes and ≥ 0.10 with CI > 0 supports. Only F2 was pre-registered.
+### 2b. Every seed, every learner, every condition
+
+Dots are the individual runs (3 seeds per trained learner; 1 for controls) and the bar is their mean. This shows
+the seed-to-seed spread behind every mean above.
+""")
+code(r'''
+STRIP = ["probe_mlp_single", "probe", "nuis_mlp_r2", "nuis_r2", "hmm", "gmm", "hmm_cp_ap", "hmm_fixed_acc", "stat_lin", "eff_rank"]
+fig, axes = plt.subplots(len(STRIP), 5, figsize=(18, 2.1 * len(STRIP)), sharex=True, sharey="row")
+for i, m in enumerate(STRIP):
+    for j, c in enumerate(CONDS):
+        a = axes[i, j]
+        for x, key in enumerate(ORDER):
+            v = df[(df.cond == c) & (df.learner == key)][m].dropna().to_numpy()
+            if not len(v): continue
+            jit = np.linspace(-0.18, 0.18, len(v)) if len(v) > 1 else [0]
+            a.scatter(x + np.asarray(jit), v, marker=MARK[key], color=FAMC[FAMILY[key]], s=22, edgecolor="white", lw=0.5, zorder=3)
+            a.plot([x - 0.3, x + 0.3], [v.mean()] * 2, color=INK, lw=1.2)
+        if m in ("probe_mlp_single", "probe", "hmm", "hmm_fixed_acc"): a.axhline(0.5, color=RULE, lw=1.5, zorder=0)
+        if m in ("nuis_mlp_r2", "nuis_r2", "stat_lin"): a.axhline(0, color=RULE, lw=1.5, zorder=0)
+        if i == 0: a.set_title(c)
+        if j == 0: a.set_ylabel(SPEC[m][0], fontsize=7.5)
+for a in axes[-1]: a.set_xticks(range(len(ORDER)), ORDER, rotation=70, fontsize=7.5)
+plt.tight_layout(); plt.show()
+''')
+md("""
+### 2c. Paired family effects (prediction − reconstruction) for every metric and condition
+
+Gray dots are the three per-seed paired differences. Black is the mean with its 95% bootstrap CI over seeds. Dashed
+lines mark the pre-registered decision bands (< 0.05 refutes; ≥ 0.10 with CI > 0 supports), drawn only where they
+decide a hypothesis (H1 and H3b on F2). Every other cell is descriptive.
 """)
 code(r'''
 def fam_seed(c, ls, m):
     return df[(df.cond == c) & df.learner.isin(ls)].groupby("seed")[m].mean().reindex([0, 1, 2]).to_numpy()
-panels = [("probe_mlp_single", "H1: single-window MLP probe"), ("probe", "secondary: linear probe"),
-          ("probe_mlp_pair", "secondary: pair MLP probe"), ("hmm", "H3b: HMM accuracy"), ("nuis_mlp_r2", "nuisance MLP R² (H2 metric)")]
-fig, axes = plt.subplots(1, 5, figsize=(18, 3.2), sharey=True)
-for a, (m, title) in zip(axes, panels):
+EFF = ["probe_mlp_single", "probe", "probe_mlp_pair", "hmm", "gmm", "hmm_fixed_acc", "hmm_cp_ap", "hmm_cp_covering",
+       "nuis_mlp_r2", "nuis_r2", "lat_lin", "stat_lin"]
+fig, axes = plt.subplots(3, 4, figsize=(18, 9), sharey=True)
+for a, m in zip(axes.ravel(), EFF):
     for i, c in enumerate(CONDS):
         p, r = fam_seed(c, PRED, m), fam_seed(c, RECON, m)
         d, ci = _boot_diff(p, r)
         a.plot(p - r, [i] * 3, "o", color=MUTED, ms=4, alpha=0.8)
         a.errorbar(d, i, xerr=[[d - ci[0]], [ci[1] - d]], fmt="o", color=INK, ms=6, capsize=3, lw=1.5)
-    if m != "nuis_mlp_r2":
-        for x in (0.05, 0.10):
-            a.axvline(x, ls="--", color=MUTED, lw=1)
+    if m in ("probe_mlp_single", "hmm"):
+        for x in (0.05, 0.10): a.axvline(x, ls="--", color=MUTED, lw=1)
     a.axvline(0, color=RULE, lw=1.5, zorder=0)
-    a.set_title(title); a.set_xlabel("pred − recon")
-axes[0].set_yticks(range(5), [c + (" (pre-registered)" if c == "F2" else "") for c in CONDS]); axes[0].invert_yaxis()
+    a.set_title(SPEC[m][0] + (" — decides H1" if m == "probe_mlp_single" else " — decides H3b" if m == "hmm" else ""), fontsize=8.5)
+    a.set_xlabel("pred − recon")
+for a in axes[:, 0]: a.set_yticks(range(5), [c + (" *" if c == "F2" else "") for c in CONDS])
+axes[0, 0].invert_yaxis()
+fig.text(0.01, 0.005, "* F2 = pre-registered condition", color=INK2, fontsize=8)
 plt.tight_layout(); plt.show()
 ''')
 md("""
-**Geometry: is the information *linearly* accessible?** Each point is one learner in one condition (seed mean).
+### 2d. Geometry: is the information *linearly* accessible?
+
+ Each point is one learner in one condition (seed mean).
 Points on the diagonal are as readable linearly as nonlinearly. Points far below it hold the information in a
 nonlinear form.
 
@@ -261,7 +530,9 @@ axes[0].legend(handles=learner_handles(), fontsize=7, loc="lower right", ncol=2)
 plt.tight_layout(); plt.show()
 ''')
 md("""
-**Mechanism (exploratory association).** Nuisance accessibility against HMM accuracy, one point per run. On F the
+### 2e. Mechanism (exploratory association)
+
+ Nuisance accessibility against HMM accuracy, one point per run. On F the
 JEPAs sit to the left (nuisance dropped), yet AE/VAE cluster just as well with the nuisance kept. On S everyone
 fails to cluster.
 """)
@@ -275,28 +546,53 @@ axes[0].set_ylabel("HMM accuracy"); axes[-1].legend(handles=learner_handles(), f
 plt.tight_layout(); plt.show()
 ''')
 md("""
-**Dose response.** Each metric against nuisance amplitude σ_n. Solid is fast nuisance and dashed is slow; σ_n = 0
-is N0, shared by both. Thin lines are seeds, thick lines their mean.
+### 2f. Dose response for every trained learner
+
+Each metric is plotted against nuisance amplitude sigma_n. Solid is fast nuisance and dashed is slow; sigma_n = 0 is
+N0, shared by both. Thin lines are seeds and thick lines their mean.
 """)
 code(r'''
-rows = [("hmm", "HMM acc"), ("probe_mlp_single", "MLP probe"), ("probe", "linear probe"), ("nuis_mlp_r2", "nuisance MLP R²")]
-fig, axes = plt.subplots(len(rows), 6, figsize=(17, 9), sharex=True, sharey="row")
+rows = ["hmm", "gmm", "hmm_cp_ap", "probe_mlp_single", "probe", "nuis_mlp_r2", "nuis_r2", "stat_lin"]
+fig, axes = plt.subplots(len(rows), 6, figsize=(17, 2.2 * len(rows)), sharex=True, sharey="row")
 for j, l in enumerate(TRAINED):
     col = FAMC[FAMILY[l]]
-    for i, (m, lab) in enumerate(rows):
+    for i, m in enumerate(rows):
         a = axes[i, j]
         for sp, ls in (("fast", "-"), ("slow", "--")):
             sub = df[(df.learner == l) & ((df.speed == sp) | (df.cond == "N0"))]
             for s, g in sub.groupby("seed"):
                 g = g.sort_values("sigma_n"); a.plot(g.sigma_n, g[m], ls, color=col, lw=0.6, alpha=0.4)
             g = sub.groupby("sigma_n")[m].mean(); a.plot(g.index, g.values, ls, color=col, lw=2, marker=MARK[l], ms=5, label=sp)
-        if j == 0: a.set_ylabel(lab)
+        if j == 0: a.set_ylabel(SPEC[m][0], fontsize=7.5)
         if i == 0: a.set_title(l)
         if i == len(rows) - 1: a.set_xlabel("sigma_n")
 axes[0, 0].legend(fontsize=7)
 plt.tight_layout(); plt.show()
 ''')
+md("""
+### 2g. Full numeric tables
 
+The tables give mean ± sd over seeds for every metric, by group. After them comes the complete per-run table, all
+110 rows and every column.
+""")
+code(r'''
+def table(ms):
+    out = {}
+    for m in ms:
+        mu, s = mean[m].unstack()[CONDS].reindex(ORDER), sd[m].unstack()[CONDS].reindex(ORDER)
+        fmt = (lambda v: f"{v / 1000:.0f}k") if SPEC[m][4] == "k" else (lambda v: format(v, SPEC[m][4]))
+        out[m] = mu.map(lambda v: "–" if not np.isfinite(v) else fmt(v)) + s.map(lambda v: "" if not np.isfinite(v) else " ± " + format(v, ".2f" if SPEC[m][4] != "k" else ".0f"))
+    return pd.concat(out, axis=1)
+with pd.option_context("display.max_columns", 200, "display.width", 300):
+    for g, ms in GROUPS.items():
+        print("\n" + g.upper()); display(table(ms))
+''')
+code(r'''
+with pd.option_context("display.max_rows", 200, "display.max_columns", 100, "display.width", 400):
+    cols = ["cond", "learner", "family", "seed"] + [m for ms in GROUPS.values() for m in ms] + ["backbone", "parameters_encoder", "steps", "protocol", "eval_seed"]
+    pos = {k: i for i, k in enumerate(CONDS + ORDER)}
+    display(df.assign(_c=df.cond.map(pos), _l=df.learner.map(pos)).sort_values(["_c", "_l", "seed"])[cols].reset_index(drop=True).round(3))
+''')
 # ------------------------------------------------------------------ 3. latent spaces
 md("""
 ## 3. Latent spaces
@@ -452,13 +748,70 @@ for a in axes[-1]:
 plt.tight_layout(); plt.show()
 ''')
 
-# ------------------------------------------------------------------ 6. CPC check
+
+# ------------------------------------------------------------------ 6. other experiments
 md("""
-## 6. CPC trainability check (label-free, before HPC release)
+## 6. The other experiments
+
+### 6a. Preflight control audit on the fresh evaluation series (part of the confirmatory launch)
+
+These are the controls only, scored before any learner was trained. They supplied the oracle gate (HMM ≥ 0.95
+everywhere, passed at 0.959). They also confirm that a hand-built lag-covariance statistic (`raw_lagcov`) recovers
+the regime in every condition, and that raw windows do so only without nuisance.
+""")
+code(r'''
+au = pd.read_csv(os.path.join(L, "audit.csv"))
+show = ["probe_mlp_single", "probe", "probe_mlp_pair", "nuis_mlp_r2", "nuis_r2", "hmm", "gmm", "hmm_cp_ap", "eff_rank"]
+with pd.option_context("display.width", 300):
+    display(au.pivot(index="learner", columns="cond", values=show).reindex(["untrained", "raw_flat", "raw_lagcov", "oracle"])[[(m, c) for m in show for c in CONDS]].round(2))
+display(pd.read_csv(os.path.join(L, "audit_gates.csv")))
+''')
+md("""
+### 6b. The exploratory pilot vs the confirmatory run (context only, never pooled)
+
+The pilot differs from the confirmatory run in almost every respect:
+
+| | pilot | confirmatory run |
+|---|---|---|
+| code | legacy (pre-`audit_v2`) | current |
+| training stream | v1 | v2 |
+| training steps | 3k | 20k |
+| seeds | 1 | 3 |
+| evaluation series | seed 0 | fresh (`eval_seed` 20261016) |
+| conditions | N0, F2, S2 | all five |
+
+The pilot's `probe_mlp` is the window-pair probe, so it is compared with `probe_mlp_pair`. Points on the diagonal
+replicated. The large miss is the AE on F2 (pilot HMM 0.54, confirmatory 0.97): the pilot failure did not replicate.
+""")
+code(r'''
+pil = pd.read_csv("cpbench_results/recon_vs_pred_pilot.csv").rename(columns={"probe_mlp": "probe_mlp_pair"})
+hm = df.groupby(["cond", "learner"]).mean(numeric_only=True).reset_index()
+both = pil.merge(hm, on=["cond", "learner"], suffixes=("_pilot", "_hpc"))
+MS = ["probe", "probe_mlp_pair", "nuis_r2", "hmm", "gmm", "eff_rank"]
+fig, axes = plt.subplots(1, len(MS), figsize=(19, 3.4))
+for a, m in zip(axes, MS):
+    lo, hi = (0, 17) if m == "eff_rank" else (-0.6, 1.02) if m == "nuis_r2" else (0.4, 1.02)
+    a.plot([lo, hi], [lo, hi], color=RULE, lw=1.5, zorder=0)
+    for r in both.itertuples():
+        a.scatter(getattr(r, m + "_pilot"), getattr(r, m + "_hpc"), marker=MARK[r.learner], color=FAMC[FAMILY[r.learner]],
+                  s=40, edgecolor="white", lw=0.6)
+        if m == "hmm" and abs(getattr(r, m + "_pilot") - getattr(r, m + "_hpc")) > 0.2:
+            k = sum(1 for _ in a.texts)
+            a.annotate(f"{r.learner} {r.cond}", (getattr(r, m + "_pilot"), getattr(r, m + "_hpc")), fontsize=7, xytext=(10, -14 - 11 * k),
+                       textcoords="offset points", arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.6))
+    a.set_xlim(lo, hi); a.set_ylim(lo, hi); a.set_title(m); a.set_xlabel("pilot (1 seed, 3k, legacy)")
+axes[0].set_ylabel("confirmatory (3-seed mean, 20k)")
+axes[-1].legend(handles=learner_handles(), fontsize=6.5, loc="center left", bbox_to_anchor=(1, 0.5))
+plt.tight_layout(); plt.show()
+with pd.option_context("display.width", 300):
+    display(both.set_index(["cond", "learner"])[[f"{m}_{k}" for m in MS for k in ("pilot", "hpc")]].round(2))
+''')
+md("""
+### 6c. CPC trainability check (label-free, before HPC release)
 
 F2, seed 0, 3k steps. Selection used only the loss ratio (rule < 0.9) and the effective rank (rule > 2). No setting
 passed, so CPC kept its defaults and was pre-declared "failed to train". In the confirmatory run none of its 15 runs
-collapsed.
+collapsed, but it lost the regime on S2.
 """)
 code(r'''
 cc = pd.read_csv("cpbench_results/recon_vs_pred_cpc_check.csv")
