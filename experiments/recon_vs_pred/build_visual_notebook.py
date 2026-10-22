@@ -11,7 +11,7 @@ cells = []
 md = lambda s: cells.append(nbf.v4.new_markdown_cell(s.strip()))
 code = lambda s: cells.append(nbf.v4.new_code_cell(s.strip()))
 
-md("""
+md(r"""
 # Reconstruction vs contrastive vs prediction: what was run, what came out, and what it looks like
 
 Display only. It reads the frozen HPC launch (cached test-set features and run logs) and the committed result CSVs.
@@ -30,7 +30,7 @@ Nothing is retrained, and nothing here changes a verdict.
 6. **The other experiments**: preflight control audit on the fresh series, the exploratory pilot (context only,
    never pooled) and the CPC trainability check
 """)
-md("""
+md(r"""
 ## 0. Recap
 
 ### Experiments run
@@ -128,7 +128,7 @@ assert df.protocol.nunique() == 1 and (df.eval_seed == EVAL_SEED).all()
 print(L, "|", len(df), "rows |", df.protocol.iloc[0], "| eval_seed", EVAL_SEED)
 ''')
 
-md("""
+md(r"""
 ### Verdicts of the confirmatory run
 """)
 code(r'''
@@ -139,18 +139,231 @@ with pd.option_context("display.max_colwidth", 160, "display.width", 250, "displ
 
 
 # ------------------------------------------------------------------ 1. data
-md("""
-## 1. The data
+md(r"""
+## 1. The data: how it is generated
 
-`observed = signal + nuisance + noise`, then per-channel standardisation.
+Everything below is produced by `experiments/recon_vs_pred/design.py::dataset(cond)`, which builds a
+`cpbench.data.Dataset`. Sections 1a–1e explain the recipe and show it step by step. Sections 1f–1o then look at the
+result.
 
-- **signal** = random Fourier rendering (64 channels) of the 2-D **rotation latent**. The regime is the rotation
-  direction (ω = ±0.12 rad/sample, period about 52 samples, damping 0.98).
-- **nuisance** = sigma_n × an independent random Fourier rendering of a 2-D **AR(1) latent**, either fast (tau = 16) or
-  slow (tau = 2000). It is independent of the regime.
-- **noise** = white, sigma 0.3 per channel.
+### 1a. The recipe
 
-### 1a. The three latent processes
+Each test series is simulated sample by sample, t = 1, 2, …, in six steps.
+
+**① Regime** $S_t \in \{0, 1\}$: a two-state semi-Markov chain. Segment lengths are geometric with mean 600 samples,
+so a switch happens with probability ≈ 1/600 per sample. Every switch goes to the other regime and is abrupt (no ramp).
+
+**② Signal latent** $z_t \in \mathbb{C}$, i.e. two coordinates (Re, Im): a damped, noise-driven rotation whose
+**direction is the regime**,
+
+$$z_t = 0.98\, e^{\pm i\,0.12}\, z_{t-1} + \sqrt{1 - 0.98^2}\;\epsilon_t, \qquad + \text{ in regime 0 (counter-clockwise)},\; - \text{ in regime 1 (clockwise)}.$$
+
+Each coordinate has stationary standard deviation 1, and the period is 2π/0.12 ≈ 52 samples. This is the **only**
+place the regime enters the data.
+
+**③ Nuisance latent** $u_t \in \mathbb{R}^2$: two independent AR(1) coordinates, independent of $S_t$ and $z_t$,
+
+$$u_t = \phi\, u_{t-1} + \sqrt{1 - \phi^2}\;\eta_t, \qquad \phi = e^{-1/\tau}, \quad \tau = 16 \text{ (fast) or } 2000 \text{ (slow)}.$$
+
+Each coordinate has stationary standard deviation 1. **τ is the only difference between fast and slow nuisance.**
+
+**④ Rendering to 64 channels.** Each latent passes through its **own fixed random Fourier map**:
+
+$$r_s(z)_j = \sqrt2\cos(a_j \cdot [\mathrm{Re}\,z, \mathrm{Im}\,z] + b_j), \qquad r_n(u)_j = \sqrt2\cos(c_j \cdot u + d_j), \qquad j = 1, \dots, 64,$$
+
+with $a_j, c_j \sim \mathcal N(0, I_2)$ and $b_j, d_j \sim U(0, 2\pi)$, drawn **once** from dataset seed 0. So:
+
+- the maps are identical in every condition;
+- the signal map and the nuisance map are different;
+- each rendered channel is bounded in ±√2.
+
+**⑤ Mixing:** the two renders are added channel by channel, scaled by the nuisance amplitude σ_n, plus white
+pixel noise:
+
+$$x_t = r_s(z_t) + \sigma_n\, r_n(u_t) + 0.3\,\varepsilon_t, \qquad \varepsilon_t \sim \mathcal N(0, I_{64}).$$
+
+**⑥ Standardisation**, per channel: $o_t = (x_t - \mu)/\mathrm{sd}$. Here μ and sd are computed **once per condition**
+from a fixed calibration draw (16 series × 2048 samples), then frozen.
+
+| condition | N0 | F1 | F2 | S1 | S2 |
+|---|---|---|---|---|---|
+| nuisance timescale τ | (none) | 16 | 16 | 2000 | 2000 |
+| nuisance amplitude σ_n | 0 | 1 | 2 | 1 | 2 |
+
+**What each party sees.** Learners see only $o_t$, never $S_t$, $z_t$ or $u_t$. Evaluation uses $S_t$ (regime
+accuracy and probes), $u_t$ (the nuisance probes `nuis_*`) and $z_t$ (identifiability `lat_*`, `stat_*`). Everything
+except σ_n and τ is identical across conditions: regime paths, latents, maps and noise draws all come from the same
+seeds. So conditions are paired.
+
+**Code:**
+
+| component | location |
+|---|---|
+| regime | `cpbench/data/regime.py` (`markov`) |
+| signal | `cpbench/data/sources.py` (`oscillator`) |
+| nuisance | `cpbench/data/sources.py` (`ar`) |
+| render, fold, noise, standardisation | `cpbench/data/transforms.py` |
+| assembly | `cpbench/data/dataset.py` (`Dataset.sample`) |
+
+### 1b. The parameters, read from the code
+
+This cell checks the recipe above against the objects the experiment actually uses.
+""")
+code(r'''
+import json as _json
+print("dataset('F2') =", _json.dumps(dataset("F2"), indent=1)[:2000])
+DS = {c: Dataset(dataset(c)) for c in CONDS}
+sig_r, nui_r = DS["F2"].sources[0].chain[0], DS["F2"].sources[1].chain[0]
+rows = []
+for c in CONDS:
+    d = DS[c]; nu = d.sources[1]
+    rows.append(dict(cond=c, tau=TAU[CONDITIONS[c][0]] if CONDITIONS[c][1] else "-", phi=round(nu.inner[0].phi, 5),
+                     sigma_n=nu.scale, nuisance_map_same_as_F2=bool(np.array_equal(nu.chain[0].A, nui_r.A) and np.array_equal(nu.chain[0].b, nui_r.b)),
+                     signal_map_same_as_F2=bool(np.array_equal(d.sources[0].chain[0].A, sig_r.A)),
+                     standardisation_sd_mean=round(float(d._std.sd.mean()), 2)))
+display(pd.DataFrame(rows).set_index("cond"))
+print("render maps: signal", sig_r.A.shape, "nuisance", nui_r.A.shape, "| signal map == nuisance map:", np.array_equal(sig_r.A, nui_r.A))
+print("regime process:", DS["F2"].regimes["main"].spec(), "| signal source:", {k: DS["F2"].sources[0].inner[0].params[k] for k in ("freq", "damp", "quadrature")})
+print("In N0, the nuisance is still simulated but multiplied by sigma_n = 0. The larger standardisation sd under",
+      "nuisance (about 0.9 -> 1.85 at sigma_n = 2) means the signal is about 2x smaller in what learners see.")
+''')
+md(r"""
+### 1c. Step by step: from latents to what the learner sees
+
+These are the same 300 samples, around a regime switch, followed through every step for N0, F2 and S2. In the
+channel rows, the same three channels are drawn in the same colours, so each step can be traced. Row labels use the
+recipe's step numbers. The y-axes are shared along each row, so amplitudes compare across conditions.
+
+- **N0:** the observed channel is just the rendered signal plus a little noise.
+- **F2:** a large, fast-wiggling nuisance is added.
+- **S2:** a large, almost constant offset is added instead. After standardisation (bottom row) the signal is visibly
+  smaller relative to the nuisance in both.
+""")
+code(r'''
+def components(c, n=1500, R=1, tag=99):
+    """obs = signal + nuisance + noise exactly (before standardisation); same regime path, latents and noise draws."""
+    def draw(sigma_n, noise, standardize=False):
+        d = dataset(c); d["standardize"] = standardize
+        d["sources"][1]["scale"] = sigma_n; d["transforms"][1]["sigma"] = noise
+        return Dataset(d).sample(R, n, np.random.default_rng([EVAL_SEED, tag]))
+    sn = CONDITIONS[c][1]
+    full, sig = draw(sn, NOISE), draw(0.0, 0.0)
+    nuis = draw(sn, 0.0)["obs"] - sig["obs"]; noise = draw(0.0, NOISE)["obs"] - sig["obs"]
+    assert np.abs(full["obs"] - (sig["obs"] + nuis + noise)).max() < 1e-4
+    return dict(signal=sig["obs"], nuisance=nuis, noise=noise, observed=full["obs"],
+                standardised=draw(sn, NOISE, True)["obs"], S=full["S_s"], latent=full["latent"], u=full["nuisance"])
+COMP = {c: components(c) for c in CONDS}
+sw = 200 + int(np.flatnonzero(np.diff(COMP["N0"]["S"][0, 200:]) != 0)[0])     # first regime switch after sample 200
+seg = slice(sw - 150, sw + 150); x = np.arange(seg.start, seg.stop)
+CHS = list(np.argsort(COMP["N0"]["signal"][0].var(0))[::-1][:3])               # three channels with the strongest signal
+CHC = [BLUE, ORANGE, AQUA]
+STEPS = [("regime", "① regime S_t"), ("latent", "② signal latent z_t\n(Re black, Im gray)"),
+         ("u", "③ nuisance latent u_t\n(2 coords)"), ("signal", "④ rendered signal\nr_s(z_t)"),
+         ("nuisance", "④⑤ rendered nuisance\nx σ_n: σ_n·r_n(u_t)"), ("noise", "⑤ noise 0.3 ε_t"),
+         ("observed", "⑤ x_t = signal\n+ nuisance + noise"), ("standardised", "⑥ o_t, standardised\n(what learners see)")]
+show = ["N0", "F2", "S2"]
+fig, ax = plt.subplots(len(STEPS), 3, figsize=(17, 15), sharex=True, sharey="row",
+                       gridspec_kw=dict(height_ratios=[0.25] + [1] * (len(STEPS) - 1), hspace=0.15, wspace=0.05))
+for j, c in enumerate(show):
+    C = COMP[c]; S = C["S"][0, seg]
+    for i, (key, lab) in enumerate(STEPS):
+        a = ax[i, j]
+        if key == "regime":
+            a.imshow(S[None], aspect="auto", cmap=mpl.colors.ListedColormap(REG), vmin=0, vmax=1, extent=(x[0], x[-1], 0, 1)); a.set_yticks([])
+            sp, sn = CONDITIONS[c]; a.set_title(f"{c}: {'no nuisance' if sn == 0 else f'{sp} nuisance (τ = {TAU[sp]}), σ_n = {sn:g}'}", fontsize=10)
+        else:
+            a.fill_between(x, 0, 1, where=S == 1, transform=a.get_xaxis_transform(), color=RED, alpha=0.08, lw=0)
+            if key in ("latent", "u"):
+                z = C[key][0, seg]
+                a.plot(x, z[:, 0], color=INK, lw=0.9); a.plot(x, z[:, 1], color=MUTED, lw=0.9)
+                if key == "u" and CONDITIONS[c][1] == 0: a.text(0.5, 0.97, "simulated, but multiplied by σ_n = 0 below", transform=a.transAxes, ha="center", va="top", color=INK2, fontsize=8, bbox=dict(fc="white", ec="none", alpha=0.85))
+            else:
+                for ch, col in zip(CHS, CHC): a.plot(x, C[key][0, seg, ch], color=col, lw=0.9, label=f"channel {ch}")
+            a.axhline(0, color=RULE, lw=1, zorder=0)
+        if j == 0: a.set_ylabel(lab, rotation=0, ha="right", va="center", fontsize=8.5)
+for a in ax[-1]: a.set_xlabel("sample")
+fig.legend(handles=[Line2D([], [], color=col, lw=2, label=f"channel {ch}") for ch, col in zip(CHS, CHC)], loc="upper right",
+           bbox_to_anchor=(0.9, 0.935), ncol=3, fontsize=8, title="channel rows:", title_fontsize=8)
+plt.show()
+''')
+md(r"""
+### 1d. What the random Fourier rendering does
+
+Each observed channel is a fixed function of a 2-D latent. The panels show that function, $\sqrt2\cos(a_j \cdot
+\text{latent} + b_j)$, for four channels of each map: a **plane wave** over latent space, with direction $a_j$ and
+offset $b_j$ random per channel. Blue is −√2 and red +√2. The latent moves over this landscape, and the channel reads
+off the value underneath.
+
+- **Signal (top):** the black line is 60 samples of the rotation (about one turn). Its *direction* of travel, not
+  its position, encodes the regime.
+- **Nuisance (bottom):** 160 samples (one context + gap + target) of fast nuisance (orange) and slow nuisance (black).
+  The fast latent crosses many stripes within a window. The slow one barely moves, so each channel holds an almost
+  constant value for the whole training example.
+
+With 64 such channels the map is injective but no linear map inverts it, which is why linear probes can miss
+information that is present.
+""")
+code(r'''
+g = np.linspace(-3, 3, 241); GX, GY = np.meshgrid(g, g); P = np.stack([GX, GY], -1)
+fig, ax = plt.subplots(2, 4, figsize=(15, 7.4))
+zl = COMP["N0"]["latent"][0, sw:sw + 60]
+uf, us = COMP["F2"]["u"][0, 300:460], COMP["S2"]["u"][0, 300:460]
+for row, (R_, name) in enumerate(((sig_r, "signal map r_s"), (nui_r, "nuisance map r_n"))):
+    for k, ch in enumerate(CHS[:2] + [5, 40]):
+        a = ax[row, k]
+        a.imshow(np.sqrt(2) * np.cos(P @ R_.A[ch] + R_.b[ch]), extent=(-3, 3, -3, 3), origin="lower", cmap=DIV, vmin=-1.5, vmax=1.5)
+        for r in (1, 2): a.add_patch(plt.Circle((0, 0), r, fill=False, ls=":", color=INK2, lw=0.8))
+        if row == 0:
+            a.plot(zl[:, 0], zl[:, 1], color=INK, lw=1.2)
+        else:
+            a.plot(uf[:, 0], uf[:, 1], color=ORANGE, lw=1.2, label="fast u (160 samples)")
+            a.plot(us[:, 0], us[:, 1], color=INK, lw=2, label="slow u (160 samples)")
+        a.set_title(f"{name}, channel {ch}", fontsize=9); a.set_xticks([-2, 0, 2]); a.set_yticks([-2, 0, 2])
+        if k == 0: a.set_ylabel("latent coordinate 2")
+        if row == 1: a.set_xlabel("latent coordinate 1")
+ax[1, -1].legend(fontsize=7, loc="lower right")
+fig.suptitle("Rendering maps: channel value over latent space (dotted circles = 1 and 2 latent sd)", fontsize=10)
+plt.tight_layout(); plt.show()
+''')
+md(r"""
+### 1e. How training and test examples are drawn
+
+**Training** (`Dataset.train_batch`): every step draws 256 **fresh** series of 2W + gap = 160 samples, after a
+256-sample burn-in. From each, the context window is samples [0, 64) and the target window [96, 160). No sample is
+ever reused. Batch randomness is indexed by the learner seed and the batch number.
+
+- Reconstruction learners use only the context.
+- Prediction and contrastive learners use the context → target pair.
+- Because each series starts afresh, **slow nuisance is a random, almost constant offset per example, shared by
+  context and target. Fast nuisance is unrelated between the two.**
+
+**Testing** (`Dataset.test_set`): 8 series × 16000 samples drawn from the fresh evaluation seed (20261016), then cut
+into 250 non-overlapping 64-sample windows each. Window features feed the probes (trained on series 1–4, tested on
+5–8) and the unsupervised detectors.
+
+Below are two training examples per condition, as the learner receives them. They are standardised observations,
+with context and target marked.
+""")
+code(r'''
+fig, ax = plt.subplots(2, 5, figsize=(17, 5.4), sharey=True, gridspec_kw=dict(hspace=0.35, wspace=0.05))
+for j, c in enumerate(CONDS):
+    xc, xt, d = DS[c].train_batch(2, W, GAP, np.random.default_rng([0, 1000, 0]))
+    for i in range(2):
+        a = ax[i, j]; full = d["obs"][i]
+        a.imshow(full.T, aspect="auto", cmap=DIV, vmin=-3, vmax=3)
+        for lo, col, lab in ((0, BLUE, "context"), (W + GAP, ORANGE, "target")):
+            a.add_patch(plt.Rectangle((lo - 0.5, -0.5), W, 64, fill=False, ec=col, lw=2))
+            if i == 0: a.text(lo + W / 2, -3, lab, ha="center", color=col, fontsize=8)
+        a.axvspan(W - 0.5, W + GAP - 0.5, color="white", alpha=0.5, lw=0)
+        if i == 0: a.set_title(c, pad=14)
+        a.set_xlabel("sample" if i == 1 else "")
+    ax[0, j].set_yticks([] if j else [0, 32, 63])
+ax[0, 0].set_ylabel("example 1\nchannel"); ax[1, 0].set_ylabel("example 2\nchannel")
+fig.suptitle("Training examples (standardised): the gap is shaded; slow nuisance (S) shows as horizontal bands spanning context and target", fontsize=10)
+plt.show()
+''')
+md(r"""
+### 1f. The three latent processes
 
 These are the hidden variables before rendering, on the same axes. Shading marks regime 1. The rotation (top) is
 identical in every condition; only which nuisance is added, and how much of it, changes.
@@ -170,8 +383,8 @@ ax[-1].set_xlabel("sample (test series 0)")
 fig.suptitle("Latent processes (unit scale, both coordinates; regime 1 shaded). Conditions multiply the nuisance latent by sigma_n.", fontsize=10)
 plt.tight_layout(); plt.show()
 ''')
-md("""
-### 1b. What each condition adds to the observations
+md(r"""
+### 1g. What each condition adds to the observations
 
 The observation decomposes **exactly** into its three parts. Each part is re-simulated with the same random draws,
 with the other parts switched off (checked to 1e-6). Every heatmap shares one colour scale, in raw units before
@@ -180,19 +393,6 @@ what the learners actually receive (the standardised observation). It shows 400 
 the regime marked above each column (blue 0, red 1). The signal row is identical across conditions by construction.
 """)
 code(r'''
-def components(c, n=1500, R=1, tag=99):
-    """obs = signal + nuisance + noise exactly (before standardisation); same regime path, latents and noise draws."""
-    def draw(sigma_n, noise, standardize=False):
-        d = dataset(c); d["standardize"] = standardize
-        d["sources"][1]["scale"] = sigma_n; d["transforms"][1]["sigma"] = noise
-        return Dataset(d).sample(R, n, np.random.default_rng([EVAL_SEED, tag]))
-    sn = CONDITIONS[c][1]
-    full, sig = draw(sn, NOISE), draw(0.0, 0.0)
-    nuis = draw(sn, 0.0)["obs"] - sig["obs"]; noise = draw(0.0, NOISE)["obs"] - sig["obs"]
-    assert np.abs(full["obs"] - (sig["obs"] + nuis + noise)).max() < 1e-4
-    return dict(signal=sig["obs"], nuisance=nuis, noise=noise, observed=full["obs"],
-                standardised=draw(sn, NOISE, True)["obs"], S=full["S_s"], latent=full["latent"], u=full["nuisance"])
-COMP = {c: components(c) for c in CONDS}
 PARTS = ["signal", "nuisance", "noise", "observed"]
 sw = 200 + int(np.flatnonzero(np.diff(COMP["N0"]["S"][0, 200:]) != 0)[0])     # first regime switch after sample 200
 seg = slice(sw - 200, sw + 200)
@@ -213,8 +413,8 @@ fig.subplots_adjust(right=0.9)
 fig.colorbar(im, cax=fig.add_axes([0.92, 0.3, 0.01, 0.35]), label="value (raw units; standardised row: z-score)")
 plt.show()
 ''')
-md("""
-### 1c. One channel, one context–target pair
+md(r"""
+### 1h. One channel, one context–target pair
 
 This shows the channel with the strongest signal, first 400 samples. Lines are the signal (black), the nuisance (orange) and their sum
 with noise (gray). The blue span is a context window and the orange span its target, 96 samples later. Fast nuisance
@@ -236,8 +436,8 @@ for a, c in zip(ax, CONDS):
 ax[0].set_ylabel(f"channel {CH} (raw units)"); fig.legend(*ax[0].get_legend_handles_labels(), loc="upper right", ncol=3, fontsize=8)
 plt.tight_layout(rect=[0, 0, 1, 0.88]); plt.show()
 ''')
-md("""
-### 1d. How big and how fast each part is
+md(r"""
+### 1i. How big and how fast each part is
 
 **Left:** each part's share of the observed variance. At sigma_n = 2 the nuisance has about 4 times the signal's
 variance, in both the fast and the slow version. **Right:** the power spectra (Welch, averaged over channels). The
@@ -270,8 +470,8 @@ for a, c in zip(ax[1:], CONDS):
 ax[1].set_ylabel("power"); ax[1].legend(fontsize=7, loc="lower left")
 plt.tight_layout(); plt.show()
 ''')
-md("""
-### 1e. Why the type of nuisance matters for prediction
+md(r"""
+### 1j. Why the type of nuisance matters for prediction
 
 Each point is one context–target pair: the nuisance part of the observation (mean over the context window), against
 the same quantity in the target window 96 samples later. A predictor can exploit the nuisance only if the target's
@@ -303,8 +503,8 @@ ax[5].scatter(cx, tx, s=6, color=INK, alpha=0.5, lw=0); ax[5].set_title(f"signal
 ax[5].set_xlabel("context mean (ch. 0)")
 plt.tight_layout(); plt.show()
 ''')
-md("""
-### 1f. What the observations look like once standardised, condition by condition
+md(r"""
+### 1k. What the observations look like once standardised, condition by condition
 
 This compares the per-channel standardised observation of one test series across conditions, with 1500 samples and
 regime 1 shaded above. In N0 the texture is the rotation alone. F adds dense, fast speckle. S adds slowly drifting
@@ -322,8 +522,8 @@ for j, c in enumerate(CONDS):
 ax[1, 0].set_ylabel("channel (standardised)")
 plt.show()
 ''')
-md("""
-### 1g. The regime itself
+md(r"""
+### 1l. The regime itself
 """)
 code(r'''
 t = benches["N0"].test; S = t["S_s"][0]; Z = t["latent"][0]
@@ -351,7 +551,7 @@ ax[2].set_xlabel("phase advance per sample (rad); dashed = ±0.12"); ax[2].set_y
 ax[2].set_title("per-sample rotation (|latent| > 1): the regime is the sign")
 plt.tight_layout(); plt.show()
 ''')
-md("""
+md(r"""
 **The timing manipulation.** Context = samples [0, 64), target = [96, 160). The nearest context and target samples
 are 33 apart. Fast nuisance (tau = 16) decorrelates across the gap, while slow nuisance (tau = 2000) carries straight
 through. So a predictor can use the slow nuisance and can barely use the fast one.
@@ -378,7 +578,7 @@ plt.tight_layout(); plt.show()
 
 
 # ------------------------------------------------------------------ 2. results
-md("""
+md(r"""
 ## 2. Results for every variation
 
 All gates passed, so these verdicts are confirmatory. Rows marked `secondary`, `exploratory`, `info` or `reported`
@@ -390,7 +590,7 @@ v = pd.read_csv(os.path.join(L, "verdicts.csv"))
 with pd.option_context("display.max_colwidth", 160, "display.width", 250, "display.max_rows", 100):
     display(v)
 ''')
-md("""
+md(r"""
 ### 2a. Every metric as a heatmap (learner × condition, mean over seeds)
 
 Colour scales:
@@ -461,7 +661,7 @@ for g, ms in GROUPS.items():
         else: a.axis("off")
     fig.suptitle(g, x=0.02, ha="left", fontsize=11, fontweight="bold"); plt.show()
 ''')
-md("""
+md(r"""
 ### 2b. Every seed, every learner, every condition
 
 Dots are the individual runs (3 seeds per trained learner; 1 for controls) and the bar is their mean. This shows
@@ -486,7 +686,7 @@ for i, m in enumerate(STRIP):
 for a in axes[-1]: a.set_xticks(range(len(ORDER)), ORDER, rotation=70, fontsize=7.5)
 plt.tight_layout(); plt.show()
 ''')
-md("""
+md(r"""
 ### 2c. Paired family effects (prediction − reconstruction) for every metric and condition
 
 Gray dots are the three per-seed paired differences. Black is the mean with its 95% bootstrap CI over seeds. Dashed
@@ -515,7 +715,7 @@ axes[0, 0].invert_yaxis()
 fig.text(0.01, 0.005, "* F2 = pre-registered condition", color=INK2, fontsize=8)
 plt.tight_layout(); plt.show()
 ''')
-md("""
+md(r"""
 ### 2d. Geometry: is the information *linearly* accessible?
 
  Each point is one learner in one condition (seed mean).
@@ -542,7 +742,7 @@ for a, (x, y, title, lim) in zip(axes, pairs):
 axes[0].legend(handles=learner_handles(), fontsize=7, loc="lower right", ncol=2)
 plt.tight_layout(); plt.show()
 ''')
-md("""
+md(r"""
 ### 2e. Mechanism (exploratory association)
 
  Nuisance accessibility against HMM accuracy, one point per run. On F the
@@ -558,7 +758,7 @@ for a, c in zip(axes, CONDS):
 axes[0].set_ylabel("HMM accuracy"); axes[-1].legend(handles=learner_handles(), fontsize=6.5, loc="center left", bbox_to_anchor=(1, 0.5))
 plt.tight_layout(); plt.show()
 ''')
-md("""
+md(r"""
 ### 2f. Dose response for every trained learner
 
 Each metric is plotted against nuisance amplitude sigma_n. Solid is fast nuisance and dashed is slow; sigma_n = 0 is
@@ -582,7 +782,7 @@ for j, l in enumerate(TRAINED):
 axes[0, 0].legend(fontsize=7)
 plt.tight_layout(); plt.show()
 ''')
-md("""
+md(r"""
 ### 2g. Full numeric tables
 
 The tables give mean ± sd over seeds for every metric, by group. After them comes the complete per-run table, all
@@ -607,7 +807,7 @@ with pd.option_context("display.max_rows", 200, "display.max_columns", 100, "dis
     display(df.assign(_c=df.cond.map(pos), _l=df.learner.map(pos)).sort_values(["_c", "_l", "seed"])[cols].reset_index(drop=True).round(3))
 ''')
 # ------------------------------------------------------------------ 3. latent spaces
-md("""
+md(r"""
 ## 3. Latent spaces
 
 One figure per condition, with seed 0 and all 2000 test windows (8 fresh series × 250 non-overlapping windows).
@@ -668,7 +868,7 @@ for c in ("N0", "F1", "F2", "S1", "S2"):
     code(f'latent_figure("{c}")')
 
 # ------------------------------------------------------------------ 4. time domain
-md("""
+md(r"""
 ## 4. Time domain: what the features do over time, and what the HMM decodes
 
 Each panel shows one held-out test series (seed 0) and three normalised traces:
@@ -720,7 +920,7 @@ for c in ("N0", "F1", "F2", "S1", "S2"):
     code(f'time_figure("{c}")')
 
 # ------------------------------------------------------------------ 5. training
-md("""
+md(r"""
 ## 5. Training dynamics (20k steps, 3 seeds)
 
 Training loss is shown relative to its value at step 1000 (the collapse gate compares the final value with this).
@@ -763,7 +963,7 @@ plt.tight_layout(); plt.show()
 
 
 # ------------------------------------------------------------------ 6. other experiments
-md("""
+md(r"""
 ## 6. The other experiments
 
 ### 6a. Preflight control audit on the fresh evaluation series (part of the confirmatory launch)
@@ -779,7 +979,7 @@ with pd.option_context("display.width", 300):
     display(au.pivot(index="learner", columns="cond", values=show).reindex(["untrained", "raw_flat", "raw_lagcov", "oracle"])[[(m, c) for m in show for c in CONDS]].round(2))
 display(pd.read_csv(os.path.join(L, "audit_gates.csv")))
 ''')
-md("""
+md(r"""
 ### 6b. The exploratory pilot vs the confirmatory run (context only, never pooled)
 
 The pilot differs from the confirmatory run in almost every respect:
@@ -819,7 +1019,7 @@ plt.tight_layout(); plt.show()
 with pd.option_context("display.width", 300):
     display(both.set_index(["cond", "learner"])[[f"{m}_{k}" for m in MS for k in ("pilot", "hpc")]].round(2))
 ''')
-md("""
+md(r"""
 ### 6c. CPC trainability check (label-free, before HPC release)
 
 F2, seed 0, 3k steps. Selection used only the loss ratio (rule < 0.9) and the effective rank (rule > 2). No setting
